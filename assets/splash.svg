@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2048 2048">
+  <defs>
+    <linearGradient id="planeShine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0.85"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Splash hat dunklen Hintergrund (matched theme.bg #0a0a0f) -->
+  <rect width="2048" height="2048" fill="#0a0a0f"/>
+
+  <!-- Papierflieger zentriert, etwas größer für Splash -->
+  <g transform="translate(1024 1024) rotate(-25) translate(-260 -180)">
+    <ellipse cx="240" cy="380" rx="200" ry="14" fill="#000000" opacity="0.4"/>
+    <path d="M 20 60 L 500 60 L 240 360 Z" fill="#FFFFFF" opacity="0.85"/>
+    <path d="M 240 360 L 500 60 L 260 220 Z" fill="#FFFFFF" opacity="0.65"/>
+    <path d="M 20 60 L 500 60 L 260 220 Z" fill="url(#planeShine)"/>
+    <path d="M 20 60 L 500 60" stroke="#3B82F6" stroke-width="3" opacity="0.9" fill="none"/>
+  </g>
+</svg>

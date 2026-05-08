@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Pilot-Suite Verlauf grün → blau -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#10B981"/>
+      <stop offset="55%" stop-color="#0EA5E9"/>
+      <stop offset="100%" stop-color="#3B82F6"/>
+    </linearGradient>
+    <linearGradient id="planeShine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0.85"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Hintergrund (volle 1024x1024, iOS rundet selbst) -->
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+
+  <!-- Subtile Längen-/Breitengrade als Welt-Andeutung -->
+  <g stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="2" fill="none">
+    <ellipse cx="512" cy="512" rx="380" ry="380"/>
+    <ellipse cx="512" cy="512" rx="380" ry="180"/>
+    <ellipse cx="512" cy="512" rx="180" ry="380"/>
+    <line x1="512" y1="132" x2="512" y2="892"/>
+    <line x1="132" y1="512" x2="892" y2="512"/>
+  </g>
+
+  <!-- Papierflieger als Voyage-Symbol, leicht nach oben rechts geneigt -->
+  <g transform="translate(512 512) rotate(-25) translate(-260 -180)">
+    <!-- Schatten unter dem Flieger -->
+    <ellipse cx="240" cy="380" rx="200" ry="14" fill="#000000" opacity="0.18"/>
+
+    <!-- Rechte (untere) Tragfläche, leicht dunkler für Tiefe -->
+    <path d="M 20 60 L 500 60 L 240 360 Z"
+          fill="#FFFFFF" opacity="0.85"/>
+
+    <!-- Mittelfalz -->
+    <path d="M 240 360 L 500 60 L 260 220 Z"
+          fill="#FFFFFF" opacity="0.65"/>
+
+    <!-- Linke (obere) Tragfläche, hellster Teil -->
+    <path d="M 20 60 L 500 60 L 260 220 Z"
+          fill="url(#planeShine)"/>
+
+    <!-- Vordere Kante, akzentuiert -->
+    <path d="M 20 60 L 500 60"
+          stroke="#FFFFFF" stroke-width="3" opacity="0.9" fill="none"/>
+  </g>
+</svg>
