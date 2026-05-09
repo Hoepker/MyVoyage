@@ -82,123 +82,95 @@ struct Travelers: Equatable {
     }
 }
 
-// MARK: - Booking Portals
-
-struct BookingPortal: Identifiable {
-    let id = UUID()
-    let name: String
-    let urlBuilder: (TripSegment, Travelers) -> URL?
-}
-
-enum BookingPortals {
-    private static let dateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
-        f.locale = Locale(identifier: "en_US_POSIX")
-        return f
-    }()
-
-    private static func dateString(_ date: Date?) -> String {
-        guard let date else { return "" }
-        return dateFormatter.string(from: date)
-    }
-
-    private static func encode(_ s: String) -> String {
-        s.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? s
-    }
-
-    static func portals(for type: TransportType) -> [BookingPortal] {
-        switch type {
-        case .flight:
-            return [
-                BookingPortal(name: "Skyscanner") { seg, tr in
-                    let d = dateString(seg.date).replacingOccurrences(of: "-", with: "")
-                    let urlStr = "https://www.skyscanner.de/transport/flights/\(encode(seg.from))/\(encode(seg.to))/\(d)/?adults=\(tr.adults)&children=\(tr.children.count)"
-                    return URL(string: urlStr)
-                },
-                BookingPortal(name: "Google Flights") { seg, tr in
-                    let q = "Flights from \(seg.from) to \(seg.to) on \(dateString(seg.date))"
-                    let urlStr = "https://www.google.com/travel/flights?q=\(encode(q))&adults=\(tr.adults)&children=\(tr.children.count)"
-                    return URL(string: urlStr)
-                },
-                BookingPortal(name: "Expedia") { seg, tr in
-                    let urlStr = "https://www.expedia.de/Flights-Search?trip=oneway&leg1=from:\(encode(seg.from)),to:\(encode(seg.to)),departure:\(dateString(seg.date))&passengers=adults:\(tr.adults)"
-                    return URL(string: urlStr)
-                },
-            ]
-        case .train:
-            return [
-                BookingPortal(name: "DB Bahn") { seg, _ in
-                    let urlStr = "https://www.bahn.de/buchung/fahrplan/suche#sts=true&so=\(encode(seg.from))&zo=\(encode(seg.to))"
-                    return URL(string: urlStr)
-                },
-                BookingPortal(name: "Omio") { seg, tr in
-                    let urlStr = "https://www.omio.de/trains/\(encode(seg.from))-\(encode(seg.to))?date=\(dateString(seg.date))&adults=\(tr.adults)&children=\(tr.children.count)"
-                    return URL(string: urlStr)
-                },
-            ]
-        case .car:
-            return [
-                BookingPortal(name: "Rentalcars") { seg, _ in
-                    let urlStr = "https://www.rentalcars.com/de/search/?pickUpPlace=\(encode(seg.from))&puDay=\(dateString(seg.date))"
-                    return URL(string: urlStr)
-                },
-                BookingPortal(name: "Booking.com") { seg, _ in
-                    let urlStr = "https://www.booking.com/cars/search.de.html?pickup_location=\(encode(seg.from))&pickup_date=\(dateString(seg.date))"
-                    return URL(string: urlStr)
-                },
-            ]
-        case .bus:
-            return [
-                BookingPortal(name: "FlixBus") { seg, tr in
-                    let urlStr = "https://global.flixbus.com/bus-tickets/\(encode(seg.from))-\(encode(seg.to))?departureDate=\(dateString(seg.date))&adult=\(tr.adults)&children=\(tr.children.count)"
-                    return URL(string: urlStr)
-                },
-                BookingPortal(name: "Omio") { seg, tr in
-                    let urlStr = "https://www.omio.de/buses/\(encode(seg.from))-\(encode(seg.to))?date=\(dateString(seg.date))&adults=\(tr.adults)&children=\(tr.children.count)"
-                    return URL(string: urlStr)
-                },
-            ]
-        case .hotel:
-            return [
-                BookingPortal(name: "Booking.com") { seg, tr in
-                    let urlStr = "https://www.booking.com/searchresults.de.html?ss=\(encode(seg.to))&checkin=\(dateString(seg.date))&group_adults=\(tr.adults)&group_children=\(tr.children.count)"
-                    return URL(string: urlStr)
-                },
-                BookingPortal(name: "Hotels.com") { seg, tr in
-                    let urlStr = "https://de.hotels.com/search.do?q-destination=\(encode(seg.to))&q-check-in=\(dateString(seg.date))&q-rooms=1&q-room-0-adults=\(tr.adults)&q-room-0-children=\(tr.children.count)"
-                    return URL(string: urlStr)
-                },
-                BookingPortal(name: "Expedia") { seg, tr in
-                    let urlStr = "https://www.expedia.de/Hotel-Search?destination=\(encode(seg.to))&startDate=\(dateString(seg.date))&adults=\(tr.adults)&children=\(tr.children.count)"
-                    return URL(string: urlStr)
-                },
-            ]
-        }
-    }
-}
-
-// MARK: - Store
+// MARK: - Trip
 
 @Observable
-final class TripStore {
-    var tripName: String = "Meine Traumreise"
-    var travelers: Travelers = Travelers(adults: 2, children: [])
-    var segments: [TripSegment] = []
+final class Trip: Identifiable, Hashable {
+    let id = UUID()
+    var name: String
+    var travelers: Travelers
+    var segments: [TripSegment]
+    var accentHex: UInt32
 
-    init() {
-        seedDemo()
+    init(
+        name: String,
+        travelers: Travelers = Travelers(),
+        segments: [TripSegment] = [],
+        accentHex: UInt32 = 0x3B82F6
+    ) {
+        self.name = name
+        self.travelers = travelers
+        self.segments = segments
+        self.accentHex = accentHex
     }
 
-    private func seedDemo() {
-        let cal = Calendar.current
-        let base = cal.date(from: DateComponents(year: 2026, month: 6, day: 1))!
-        segments = [
-            TripSegment(type: .flight, from: "Berlin", to: "Barcelona", date: base),
-            TripSegment(type: .hotel, from: "", to: "Barcelona", date: base),
-            TripSegment(type: .car, from: "Barcelona", to: "Valencia", date: cal.date(byAdding: .day, value: 3, to: base)),
-            TripSegment(type: .train, from: "Valencia", to: "Madrid", date: cal.date(byAdding: .day, value: 6, to: base)),
-        ]
+    var accent: Color { Color(hex: accentHex) }
+
+    var startDate: Date? { segments.compactMap { $0.date }.min() }
+    var endDate: Date? { segments.compactMap { $0.date }.max() }
+
+    var dateRangeLabel: String {
+        guard let s = startDate else { return "Datum offen" }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "de_DE")
+        if let e = endDate, !Calendar.current.isDate(s, inSameDayAs: e) {
+            f.dateFormat = "d. MMM"
+            let sStr = f.string(from: s)
+            f.dateFormat = "d. MMM yyyy"
+            return "\(sStr) – \(f.string(from: e))"
+        } else {
+            f.dateFormat = "d. MMMM yyyy"
+            return f.string(from: s)
+        }
+    }
+
+    var primaryDestination: String {
+        let hotels = segments.filter { $0.type == .hotel }.compactMap { $0.to.isEmpty ? nil : $0.to }
+        if let first = hotels.first { return first }
+        return segments.compactMap { $0.to.isEmpty ? nil : $0.to }.first ?? ""
+    }
+
+    var coverEmoji: String {
+        let dest = primaryDestination.lowercased()
+        for (key, emoji) in Trip.emojiMap {
+            if dest.contains(key) { return emoji }
+        }
+        return "🌍"
+    }
+
+    private static let emojiMap: [(String, String)] = [
+        ("paris", "🗼"),
+        ("london", "🌉"),
+        ("rom", "🏛️"),
+        ("rome", "🏛️"),
+        ("florenz", "🎨"),
+        ("venedig", "🛶"),
+        ("venice", "🛶"),
+        ("new york", "🗽"),
+        ("tokio", "⛩️"),
+        ("tokyo", "⛩️"),
+        ("kyoto", "🏯"),
+        ("istanbul", "🕌"),
+        ("barcelona", "🏝️"),
+        ("madrid", "💃"),
+        ("valencia", "🍊"),
+        ("münchen", "🍺"),
+        ("munich", "🍺"),
+        ("berlin", "🐻"),
+        ("amsterdam", "🌷"),
+        ("rio", "🏖️"),
+        ("vegas", "🎰"),
+        ("san francisco", "🌉"),
+        ("dubai", "🏙️"),
+        ("bangkok", "🛕"),
+    ]
+
+    var uniquePlaceCount: Int {
+        Set(segments.flatMap { [$0.from, $0.to] }.filter { !$0.isEmpty }).count
+    }
+
+    func count(of type: TransportType) -> Int {
+        segments.filter { $0.type == type }.count
     }
 
     func addSegment() {
@@ -214,71 +186,363 @@ final class TripStore {
         segments[idx] = segment
     }
 
-    var uniquePlaceCount: Int {
-        Set(segments.flatMap { [$0.from, $0.to] }.filter { !$0.isEmpty }).count
+    static func == (lhs: Trip, rhs: Trip) -> Bool { lhs.id == rhs.id }
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
+}
+
+// MARK: - Trips Store
+
+@Observable
+final class TripsStore {
+    var trips: [Trip] = []
+
+    init() { seedDemo() }
+
+    func add(named name: String = "Neue Reise") -> Trip {
+        let trip = Trip(name: name, accentHex: nextAccent())
+        trips.append(trip)
+        return trip
     }
 
-    func count(of type: TransportType) -> Int {
-        segments.filter { $0.type == type }.count
+    func remove(_ trip: Trip) {
+        trips.removeAll { $0.id == trip.id }
+    }
+
+    private func nextAccent() -> UInt32 {
+        let palette: [UInt32] = [0x3B82F6, 0xEC4899, 0x10B981, 0xF59E0B, 0x8B5CF6, 0xEF4444]
+        return palette[trips.count % palette.count]
+    }
+
+    private func seedDemo() {
+        let cal = Calendar.current
+
+        let spainStart = cal.date(from: DateComponents(year: 2026, month: 6, day: 1))!
+        let spain = Trip(
+            name: "Spanien-Rundreise",
+            travelers: Travelers(adults: 2, children: [8]),
+            segments: [
+                TripSegment(type: .flight, from: "Berlin", to: "Barcelona", date: spainStart),
+                TripSegment(type: .hotel, from: "", to: "Barcelona", date: spainStart),
+                TripSegment(type: .car, from: "Barcelona", to: "Valencia", date: cal.date(byAdding: .day, value: 3, to: spainStart)),
+                TripSegment(type: .train, from: "Valencia", to: "Madrid", date: cal.date(byAdding: .day, value: 6, to: spainStart)),
+                TripSegment(type: .flight, from: "Madrid", to: "Berlin", date: cal.date(byAdding: .day, value: 13, to: spainStart)),
+            ],
+            accentHex: 0xF59E0B
+        )
+
+        let italyStart = cal.date(from: DateComponents(year: 2026, month: 8, day: 12))!
+        let italy = Trip(
+            name: "Italien Roadtrip",
+            travelers: Travelers(adults: 2, children: []),
+            segments: [
+                TripSegment(type: .flight, from: "Frankfurt", to: "Rom", date: italyStart),
+                TripSegment(type: .hotel, from: "", to: "Rom", date: italyStart),
+                TripSegment(type: .train, from: "Rom", to: "Florenz", date: cal.date(byAdding: .day, value: 3, to: italyStart)),
+                TripSegment(type: .train, from: "Florenz", to: "Venedig", date: cal.date(byAdding: .day, value: 6, to: italyStart)),
+            ],
+            accentHex: 0xEC4899
+        )
+
+        let tokyoStart = cal.date(from: DateComponents(year: 2027, month: 4, day: 3))!
+        let tokyo = Trip(
+            name: "Kirschblüte in Japan",
+            travelers: Travelers(adults: 2, children: []),
+            segments: [
+                TripSegment(type: .flight, from: "München", to: "Tokio", date: tokyoStart),
+                TripSegment(type: .hotel, from: "", to: "Tokio", date: tokyoStart),
+                TripSegment(type: .train, from: "Tokio", to: "Kyoto", date: cal.date(byAdding: .day, value: 5, to: tokyoStart)),
+            ],
+            accentHex: 0x8B5CF6
+        )
+
+        let nycStart = cal.date(from: DateComponents(year: 2026, month: 11, day: 22))!
+        let nyc = Trip(
+            name: "Long Weekend NYC",
+            travelers: Travelers(adults: 2, children: []),
+            segments: [
+                TripSegment(type: .flight, from: "Frankfurt", to: "New York", date: nycStart),
+                TripSegment(type: .hotel, from: "", to: "New York", date: nycStart),
+                TripSegment(type: .flight, from: "New York", to: "Frankfurt", date: cal.date(byAdding: .day, value: 4, to: nycStart)),
+            ],
+            accentHex: 0x10B981
+        )
+
+        trips = [spain, italy, tokyo, nyc]
     }
 }
 
 // MARK: - Root
 
 struct ContentView: View {
-    @State private var store = TripStore()
-    @State private var showTravelers = false
+    @State private var store = TripsStore()
 
     var body: some View {
-        ZStack(alignment: .top) {
+        NavigationStack {
+            TripsListView(store: store)
+                .navigationDestination(for: Trip.self) { trip in
+                    TripDetailView(trip: trip, store: store)
+                }
+        }
+        .tint(AppTheme.accent)
+    }
+}
+
+// MARK: - Trips List (Übersicht)
+
+struct TripsListView: View {
+    let store: TripsStore
+
+    @State private var pushNewTrip: Trip? = nil
+
+    private let columns = [GridItem(.adaptive(minimum: 160, maximum: 220), spacing: 14)]
+
+    var body: some View {
+        ZStack {
+            AppTheme.bg.ignoresSafeArea()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    header
+                    flowHint
+                    grid
+                    Color.clear.frame(height: 24)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+            }
+        }
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(AppTheme.bg, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+        .navigationDestination(item: $pushNewTrip) { trip in
+            TripDetailView(trip: trip, store: store)
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image("LogoMark")
+                    .resizable()
+                    .frame(width: 36, height: 36)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                HStack(spacing: 0) {
+                    Text("My").font(.system(.title2, design: .serif).weight(.bold))
+                    Text("Voyage").font(.system(.title2, design: .serif).weight(.bold))
+                        .foregroundStyle(AppTheme.accent)
+                }
+                Spacer()
+            }
+            Text("Meine Traumreisen")
+                .font(.system(.largeTitle, design: .serif).weight(.bold))
+                .foregroundStyle(AppTheme.text)
+                .padding(.top, 4)
+            Text("\(store.trips.count) geplante Reisen")
+                .font(.system(size: 13))
+                .foregroundStyle(AppTheme.textMuted)
+        }
+    }
+
+    private var flowHint: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "hand.tap.fill")
+                .font(.system(size: 13))
+                .foregroundStyle(AppTheme.accent)
+            Text("Tippe eine Reise an, um Etappen und Buchungen zu sehen.")
+                .font(.system(size: 12))
+                .foregroundStyle(AppTheme.textMuted)
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(AppTheme.accent.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(AppTheme.accent.opacity(0.18), lineWidth: 1)
+        )
+    }
+
+    private var grid: some View {
+        LazyVGrid(columns: columns, spacing: 14) {
+            ForEach(store.trips) { trip in
+                NavigationLink(value: trip) {
+                    TripCard(trip: trip)
+                }
+                .buttonStyle(.plain)
+            }
+            newTripCard
+        }
+    }
+
+    private var newTripCard: some View {
+        Button {
+            pushNewTrip = store.add()
+        } label: {
+            VStack(spacing: 10) {
+                Image(systemName: "plus")
+                    .font(.system(size: 26, weight: .light))
+                    .foregroundStyle(AppTheme.accent)
+                    .frame(width: 56, height: 56)
+                    .background(AppTheme.accent.opacity(0.1), in: Circle())
+                    .overlay(Circle().stroke(AppTheme.accent.opacity(0.3), lineWidth: 1))
+                Text("Neue Reise")
+                    .font(.system(.headline, design: .serif))
+                    .foregroundStyle(AppTheme.text)
+                Text("Eine leere Reise anlegen")
+                    .font(.system(size: 11))
+                    .foregroundStyle(AppTheme.textSubtle)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 200)
+            .background(Color.clear)
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
+                    .foregroundStyle(AppTheme.border)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct TripCard: View {
+    let trip: Trip
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ZStack(alignment: .topTrailing) {
+                LinearGradient(
+                    colors: [trip.accent.opacity(0.85), trip.accent.opacity(0.35), Color.black.opacity(0.6)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                Text(trip.coverEmoji)
+                    .font(.system(size: 60))
+                    .padding(.top, 14)
+                    .padding(.trailing, 14)
+                    .shadow(color: .black.opacity(0.4), radius: 12)
+            }
+            .frame(height: 110)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(trip.name)
+                    .font(.system(.headline, design: .serif).weight(.semibold))
+                    .foregroundStyle(AppTheme.text)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                Text(trip.dateRangeLabel)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(AppTheme.textMuted)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                HStack(spacing: 10) {
+                    Label("\(trip.segments.count)", systemImage: "list.bullet")
+                    Label("\(trip.travelers.total)", systemImage: "person.2.fill")
+                    Spacer()
+                }
+                .font(.system(size: 10))
+                .foregroundStyle(AppTheme.textSubtle)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(height: 200)
+        .background(AppTheme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(AppTheme.border, lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.4), radius: 12, y: 6)
+    }
+}
+
+// MARK: - Trip Detail
+
+struct TripDetailView: View {
+    @Bindable var trip: Trip
+    let store: TripsStore
+
+    @State private var showTravelers = false
+    @State private var showDeleteConfirm = false
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ZStack {
             AppTheme.bg.ignoresSafeArea()
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    headerSection
-                    SummaryBar(store: store)
+                    detailHeader
+                    SummaryBar(trip: trip)
                     sectionTitle("Reiseplan")
-                    Timeline(store: store)
+                    Timeline(trip: trip)
                     addSegmentButton
-                    if !store.segments.isEmpty {
+                    if !trip.segments.isEmpty {
                         sectionTitle("Buchungsübersicht")
                             .padding(.top, 12)
-                        BookingOverview(store: store)
+                        BookingOverview(trip: trip)
                     }
-                    Color.clear.frame(height: 24)
+                    Color.clear.frame(height: 60)
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 12)
             }
         }
-        .preferredColorScheme(.dark)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(AppTheme.bg, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Text(trip.name)
+                    .font(.system(.headline, design: .serif).weight(.semibold))
+                    .foregroundStyle(AppTheme.text)
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button(role: .destructive) {
+                        showDeleteConfirm = true
+                    } label: {
+                        Label("Reise löschen", systemImage: "trash")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .foregroundStyle(AppTheme.text)
+                }
+            }
+        }
         .sheet(isPresented: $showTravelers) {
-            TravelersSheet(travelers: $store.travelers)
+            TravelersSheet(travelers: $trip.travelers)
                 .presentationDetents([.medium, .large])
                 .presentationBackground(AppTheme.bg)
         }
+        .confirmationDialog("Reise wirklich löschen?", isPresented: $showDeleteConfirm, titleVisibility: .visible) {
+            Button("Löschen", role: .destructive) {
+                store.remove(trip)
+                dismiss()
+            }
+            Button("Abbrechen", role: .cancel) {}
+        }
     }
 
-    private var headerSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+    private var detailHeader: some View {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 0) {
-                        Text("My").font(.system(.largeTitle, design: .serif).weight(.bold))
-                        Text("Voyage").font(.system(.largeTitle, design: .serif).weight(.bold))
-                            .foregroundStyle(AppTheme.accent)
-                    }
-                    .foregroundStyle(AppTheme.text)
-                    Text("INDIVIDUELLE REISEPLANUNG")
-                        .font(.system(size: 10).weight(.medium))
-                        .tracking(2)
-                        .foregroundStyle(AppTheme.textSubtle)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(trip.coverEmoji).font(.system(size: 40))
+                    Text(trip.dateRangeLabel)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(AppTheme.textMuted)
                 }
                 Spacer()
                 travelersButton
             }
-            TextField("", text: $store.tripName, prompt: Text("Name deiner Reise...").foregroundStyle(AppTheme.text.opacity(0.25)))
-                .font(.system(.title3, design: .serif))
+
+            TextField("", text: $trip.name, prompt: Text("Name deiner Reise...").foregroundStyle(AppTheme.text.opacity(0.25)))
+                .font(.system(.title2, design: .serif))
                 .foregroundStyle(AppTheme.text)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
@@ -294,8 +558,8 @@ struct ContentView: View {
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "person.2.fill").font(.system(size: 12))
-                Text(store.travelers.summary).font(.system(size: 13))
-                Text("\(store.travelers.total)")
+                Text(trip.travelers.summary).font(.system(size: 13))
+                Text("\(trip.travelers.total)")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(.white)
                     .frame(width: 20, height: 20)
@@ -322,7 +586,7 @@ struct ContentView: View {
 
     private var addSegmentButton: some View {
         Button {
-            withAnimation(.snappy) { store.addSegment() }
+            withAnimation(.snappy) { trip.addSegment() }
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "plus")
@@ -346,16 +610,18 @@ struct ContentView: View {
 // MARK: - Summary Bar
 
 struct SummaryBar: View {
-    let store: TripStore
+    let trip: Trip
 
     var body: some View {
-        if store.segments.isEmpty { EmptyView() } else {
+        if trip.segments.isEmpty {
+            EmptyState()
+        } else {
             HStack(spacing: 18) {
-                stat("\(store.travelers.total)", "Reisende", accent: true)
-                stat("\(store.segments.count)", "Etappen")
-                stat("\(store.uniquePlaceCount)", "Orte")
-                stat("\(store.count(of: .flight))", "Flüge")
-                stat("\(store.count(of: .hotel))", "Hotels")
+                stat("\(trip.travelers.total)", "Reisende", accent: true)
+                stat("\(trip.segments.count)", "Etappen")
+                stat("\(trip.uniquePlaceCount)", "Orte")
+                stat("\(trip.count(of: .flight))", "Flüge")
+                stat("\(trip.count(of: .hotel))", "Hotels")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
@@ -378,33 +644,41 @@ struct SummaryBar: View {
     }
 }
 
+private struct EmptyState: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "lightbulb.fill")
+                .font(.system(size: 14))
+                .foregroundStyle(.yellow.opacity(0.85))
+            Text("Noch keine Etappen — füge unten Flüge, Hotels oder Mietwagen hinzu.")
+                .font(.system(size: 12))
+                .foregroundStyle(AppTheme.textMuted)
+            Spacer()
+        }
+        .padding(12)
+        .background(.yellow.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(.yellow.opacity(0.2), lineWidth: 1))
+    }
+}
+
 // MARK: - Timeline
 
 struct Timeline: View {
-    let store: TripStore
+    let trip: Trip
 
     var body: some View {
-        if store.segments.isEmpty {
-            VStack(spacing: 8) {
-                Image(systemName: "map")
-                    .font(.system(size: 36))
-                    .foregroundStyle(AppTheme.textSubtle)
-                Text("Noch keine Etappen — füge deine erste hinzu!")
-                    .font(.system(size: 13))
-                    .foregroundStyle(AppTheme.textSubtle)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 32)
+        if trip.segments.isEmpty {
+            EmptyView()
         } else {
             VStack(spacing: 0) {
-                ForEach(Array(store.segments.enumerated()), id: \.element.id) { index, segment in
+                ForEach(Array(trip.segments.enumerated()), id: \.element.id) { index, segment in
                     HStack(alignment: .top, spacing: 12) {
-                        TimelineDot(type: segment.type, isLast: index == store.segments.count - 1)
+                        TimelineDot(type: segment.type, isLast: index == trip.segments.count - 1)
                         SegmentCard(
                             segment: segment,
-                            travelers: store.travelers,
-                            onChange: { store.update($0) },
-                            onRemove: { store.remove(segment) }
+                            travelers: trip.travelers,
+                            onChange: { trip.update($0) },
+                            onRemove: { trip.remove(segment) }
                         )
                     }
                 }
@@ -725,17 +999,17 @@ struct TravelersSheet: View {
 // MARK: - Booking Overview
 
 struct BookingOverview: View {
-    let store: TripStore
+    let trip: Trip
 
     private var validSegments: [TripSegment] {
-        store.segments.filter { !$0.from.isEmpty || !$0.to.isEmpty }
+        trip.segments.filter { !$0.from.isEmpty || !$0.to.isEmpty }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 6) {
                 Image(systemName: "person.2.fill").font(.system(size: 11))
-                Text(store.travelers.summary).font(.system(size: 12))
+                Text(trip.travelers.summary).font(.system(size: 12))
             }
             .foregroundStyle(AppTheme.textMuted)
             .padding(.horizontal, 12)
@@ -775,7 +1049,7 @@ struct BookingOverview: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(portals) { portal in
-                        if let url = portal.urlBuilder(segment, store.travelers) {
+                        if let url = portal.urlBuilder(segment, trip.travelers) {
                             Link(destination: url) {
                                 HStack(spacing: 4) {
                                     Text(portal.name)
@@ -816,6 +1090,102 @@ struct BookingOverview: View {
     }
 }
 
+// MARK: - Booking Portals
+
+struct BookingPortal: Identifiable {
+    let id = UUID()
+    let name: String
+    let urlBuilder: (TripSegment, Travelers) -> URL?
+}
+
+enum BookingPortals {
+    private static let dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
+
+    private static func dateString(_ date: Date?) -> String {
+        guard let date else { return "" }
+        return dateFormatter.string(from: date)
+    }
+
+    private static func encode(_ s: String) -> String {
+        s.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? s
+    }
+
+    static func portals(for type: TransportType) -> [BookingPortal] {
+        switch type {
+        case .flight:
+            return [
+                BookingPortal(name: "Skyscanner") { seg, tr in
+                    let d = dateString(seg.date).replacingOccurrences(of: "-", with: "")
+                    let urlStr = "https://www.skyscanner.de/transport/flights/\(encode(seg.from))/\(encode(seg.to))/\(d)/?adults=\(tr.adults)&children=\(tr.children.count)"
+                    return URL(string: urlStr)
+                },
+                BookingPortal(name: "Google Flights") { seg, tr in
+                    let q = "Flights from \(seg.from) to \(seg.to) on \(dateString(seg.date))"
+                    let urlStr = "https://www.google.com/travel/flights?q=\(encode(q))&adults=\(tr.adults)&children=\(tr.children.count)"
+                    return URL(string: urlStr)
+                },
+                BookingPortal(name: "Expedia") { seg, tr in
+                    let urlStr = "https://www.expedia.de/Flights-Search?trip=oneway&leg1=from:\(encode(seg.from)),to:\(encode(seg.to)),departure:\(dateString(seg.date))&passengers=adults:\(tr.adults)"
+                    return URL(string: urlStr)
+                },
+            ]
+        case .train:
+            return [
+                BookingPortal(name: "DB Bahn") { seg, _ in
+                    let urlStr = "https://www.bahn.de/buchung/fahrplan/suche#sts=true&so=\(encode(seg.from))&zo=\(encode(seg.to))"
+                    return URL(string: urlStr)
+                },
+                BookingPortal(name: "Omio") { seg, tr in
+                    let urlStr = "https://www.omio.de/trains/\(encode(seg.from))-\(encode(seg.to))?date=\(dateString(seg.date))&adults=\(tr.adults)&children=\(tr.children.count)"
+                    return URL(string: urlStr)
+                },
+            ]
+        case .car:
+            return [
+                BookingPortal(name: "Rentalcars") { seg, _ in
+                    let urlStr = "https://www.rentalcars.com/de/search/?pickUpPlace=\(encode(seg.from))&puDay=\(dateString(seg.date))"
+                    return URL(string: urlStr)
+                },
+                BookingPortal(name: "Booking.com") { seg, _ in
+                    let urlStr = "https://www.booking.com/cars/search.de.html?pickup_location=\(encode(seg.from))&pickup_date=\(dateString(seg.date))"
+                    return URL(string: urlStr)
+                },
+            ]
+        case .bus:
+            return [
+                BookingPortal(name: "FlixBus") { seg, tr in
+                    let urlStr = "https://global.flixbus.com/bus-tickets/\(encode(seg.from))-\(encode(seg.to))?departureDate=\(dateString(seg.date))&adult=\(tr.adults)&children=\(tr.children.count)"
+                    return URL(string: urlStr)
+                },
+                BookingPortal(name: "Omio") { seg, tr in
+                    let urlStr = "https://www.omio.de/buses/\(encode(seg.from))-\(encode(seg.to))?date=\(dateString(seg.date))&adults=\(tr.adults)&children=\(tr.children.count)"
+                    return URL(string: urlStr)
+                },
+            ]
+        case .hotel:
+            return [
+                BookingPortal(name: "Booking.com") { seg, tr in
+                    let urlStr = "https://www.booking.com/searchresults.de.html?ss=\(encode(seg.to))&checkin=\(dateString(seg.date))&group_adults=\(tr.adults)&group_children=\(tr.children.count)"
+                    return URL(string: urlStr)
+                },
+                BookingPortal(name: "Hotels.com") { seg, tr in
+                    let urlStr = "https://de.hotels.com/search.do?q-destination=\(encode(seg.to))&q-check-in=\(dateString(seg.date))&q-rooms=1&q-room-0-adults=\(tr.adults)&q-room-0-children=\(tr.children.count)"
+                    return URL(string: urlStr)
+                },
+                BookingPortal(name: "Expedia") { seg, tr in
+                    let urlStr = "https://www.expedia.de/Hotel-Search?destination=\(encode(seg.to))&startDate=\(dateString(seg.date))&adults=\(tr.adults)&children=\(tr.children.count)"
+                    return URL(string: urlStr)
+                },
+            ]
+        }
+    }
+}
+
 // MARK: - Splash
 
 struct SplashView: View {
@@ -827,7 +1197,7 @@ struct SplashView: View {
     private struct Destination {
         let emoji: String
         let city: String
-        let angle: Double  // degrees, 0 = right, 90 = down
+        let angle: Double
     }
 
     private let destinations: [Destination] = [
@@ -938,7 +1308,7 @@ struct SplashView: View {
     }
 }
 
-#Preview {
+#Preview("List") {
     ContentView()
 }
 
