@@ -1,17 +1,21 @@
-//
-//  MyVoyageApp.swift
-//  MyVoyage
-//
-//  Created by Christian Höpker on 09.05.26.
-//
-
 import SwiftUI
 
 @main
 struct MyVoyageApp: App {
+    @State private var showSplash = true
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ZStack {
+                if showSplash {
+                    SplashView(isPresented: $showSplash)
+                        .transition(.opacity)
+                } else {
+                    ContentView()
+                        .transition(.opacity)
+                }
+            }
+            .preferredColorScheme(.dark)
         }
     }
 }

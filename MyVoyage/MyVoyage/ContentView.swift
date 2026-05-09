@@ -816,6 +816,132 @@ struct BookingOverview: View {
     }
 }
 
+// MARK: - Splash
+
+struct SplashView: View {
+    @Binding var isPresented: Bool
+    @State private var animateCards = false
+    @State private var animateLogo = false
+    @State private var fadeOut = false
+
+    private struct Destination {
+        let emoji: String
+        let city: String
+        let angle: Double  // degrees, 0 = right, 90 = down
+    }
+
+    private let destinations: [Destination] = [
+        Destination(emoji: "🗼", city: "Paris",     angle: -160),
+        Destination(emoji: "🌉", city: "London",    angle: -110),
+        Destination(emoji: "🏛️", city: "Rom",       angle: -55),
+        Destination(emoji: "🗽", city: "New York",  angle: 5),
+        Destination(emoji: "⛩️", city: "Tokyo",     angle: 60),
+        Destination(emoji: "🕌", city: "Istanbul",  angle: 110),
+        Destination(emoji: "🏰", city: "Bayern",    angle: 160),
+        Destination(emoji: "🗿", city: "Rapa Nui",  angle: -200),
+    ]
+
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [Color(hex: 0x0A0A0F), Color(hex: 0x101A33), Color(hex: 0x0A0A0F)],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+
+            Circle()
+                .fill(AppTheme.accent.opacity(0.10))
+                .frame(width: 380, height: 380)
+                .blur(radius: 90)
+                .offset(x: 110, y: -180)
+
+            Circle()
+                .fill(Color(hex: 0xEC4899).opacity(0.06))
+                .frame(width: 280, height: 280)
+                .blur(radius: 80)
+                .offset(x: -120, y: 220)
+
+            ForEach(Array(destinations.enumerated()), id: \.offset) { idx, dest in
+                postcard(for: dest, index: idx)
+            }
+
+            VStack(spacing: 14) {
+                Image("LogoMark")
+                    .resizable()
+                    .frame(width: 110, height: 110)
+                    .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                    .shadow(color: .black.opacity(0.55), radius: 30, y: 12)
+
+                HStack(spacing: 0) {
+                    Text("My").font(.system(.largeTitle, design: .serif).weight(.bold))
+                        .foregroundStyle(.white)
+                    Text("Voyage").font(.system(.largeTitle, design: .serif).weight(.bold))
+                        .foregroundStyle(AppTheme.accent)
+                }
+
+                Text("INDIVIDUELLE REISEPLANUNG")
+                    .font(.system(size: 10, weight: .medium))
+                    .tracking(3)
+                    .foregroundStyle(.white.opacity(0.45))
+            }
+            .scaleEffect(animateLogo ? 1.0 : 0.55)
+            .opacity(animateLogo ? 1.0 : 0)
+        }
+        .opacity(fadeOut ? 0 : 1)
+        .onAppear { runIntro() }
+    }
+
+    private func postcard(for dest: Destination, index: Int) -> some View {
+        let radius: CGFloat = 155
+        let angleRad = Angle.degrees(dest.angle).radians
+        let target = CGSize(width: cos(angleRad) * radius, height: sin(angleRad) * radius)
+        let start = CGSize(width: target.width * 5, height: target.height * 5)
+        let tilt: Double = (index % 2 == 0) ? -10 : 10
+
+        return VStack(spacing: 4) {
+            Text(dest.emoji).font(.system(size: 38))
+            Text(dest.city)
+                .font(.system(size: 11, weight: .medium, design: .serif))
+                .foregroundStyle(.black.opacity(0.7))
+        }
+        .frame(width: 92, height: 108)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(hex: 0xF5F1E8))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(.black.opacity(0.08), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.45), radius: 14, x: 4, y: 8)
+        .offset(animateCards ? target : start)
+        .rotationEffect(animateCards ? .degrees(tilt) : .degrees(tilt * 4))
+        .opacity(animateCards ? 1 : 0)
+        .animation(
+            .spring(response: 1.0, dampingFraction: 0.72)
+                .delay(0.06 * Double(index)),
+            value: animateCards
+        )
+    }
+
+    private func runIntro() {
+        animateCards = true
+        withAnimation(.spring(response: 0.55, dampingFraction: 0.7).delay(0.15)) {
+            animateLogo = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) {
+            withAnimation(.easeInOut(duration: 0.45)) { fadeOut = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                isPresented = false
+            }
+        }
+    }
+}
+
 #Preview {
     ContentView()
+}
+
+#Preview("Splash") {
+    SplashView(isPresented: .constant(true))
 }
