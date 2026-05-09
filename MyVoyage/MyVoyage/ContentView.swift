@@ -413,16 +413,29 @@ private struct TripCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ZStack(alignment: .topTrailing) {
+                DestinationImageView(destination: trip.primaryDestination) {
+                    LinearGradient(
+                        colors: [trip.accent.opacity(0.85), trip.accent.opacity(0.35), Color.black.opacity(0.6)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                }
+                .frame(height: 110)
+                .clipped()
+
                 LinearGradient(
-                    colors: [trip.accent.opacity(0.85), trip.accent.opacity(0.35), Color.black.opacity(0.6)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
+                    colors: [Color.clear, Color.black.opacity(0.55)],
+                    startPoint: .top,
+                    endPoint: .bottom
                 )
+                .frame(height: 110)
+                .allowsHitTesting(false)
+
                 Text(trip.coverEmoji)
-                    .font(.system(size: 60))
-                    .padding(.top, 14)
-                    .padding(.trailing, 14)
-                    .shadow(color: .black.opacity(0.4), radius: 12)
+                    .font(.system(size: 36))
+                    .padding(.top, 8)
+                    .padding(.trailing, 10)
+                    .shadow(color: .black.opacity(0.5), radius: 8)
             }
             .frame(height: 110)
 
@@ -530,16 +543,43 @@ struct TripDetailView: View {
 
     private var detailHeader: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(trip.coverEmoji).font(.system(size: 40))
-                    Text(trip.dateRangeLabel)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(AppTheme.textMuted)
+            ZStack(alignment: .bottomLeading) {
+                DestinationImageView(destination: trip.primaryDestination) {
+                    LinearGradient(
+                        colors: [trip.accent.opacity(0.7), trip.accent.opacity(0.25), Color.black.opacity(0.6)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
                 }
-                Spacer()
-                travelersButton
+                .frame(height: 200)
+                .clipped()
+
+                LinearGradient(
+                    colors: [Color.clear, Color.black.opacity(0.7)],
+                    startPoint: .center,
+                    endPoint: .bottom
+                )
+                .allowsHitTesting(false)
+
+                HStack(alignment: .bottom) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(trip.coverEmoji).font(.system(size: 32))
+                            .shadow(color: .black.opacity(0.5), radius: 8)
+                        Text(trip.dateRangeLabel)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.85))
+                            .shadow(color: .black.opacity(0.6), radius: 4)
+                    }
+                    Spacer()
+                    travelersButton
+                }
+                .padding(14)
             }
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(AppTheme.border, lineWidth: 1)
+            )
 
             TextField("", text: $trip.name, prompt: Text("Name deiner Reise...").foregroundStyle(AppTheme.text.opacity(0.25)))
                 .font(.system(.title2, design: .serif))
@@ -549,6 +589,15 @@ struct TripDetailView: View {
                 .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppTheme.border, lineWidth: 1))
                 .submitLabel(.done)
+
+            HStack(spacing: 4) {
+                Image(systemName: "info.circle").font(.system(size: 9))
+                Text("Coverfotos: Wikimedia Commons")
+                    .font(.system(size: 10))
+                Spacer()
+            }
+            .foregroundStyle(AppTheme.textSubtle)
+            .padding(.top, -4)
         }
     }
 
@@ -1182,6 +1231,158 @@ enum BookingPortals {
                     return URL(string: urlStr)
                 },
             ]
+        }
+    }
+}
+
+// MARK: - Destination Image Service
+
+struct DestinationImage: Equatable {
+    let url: URL
+    let attribution: String  // "Wikipedia / <author>"
+}
+
+@MainActor
+@Observable
+final class DestinationImageService {
+    static let shared = DestinationImageService()
+
+    private var cache: [String: DestinationImage?] = [:]
+    private var inflight: [String: Task<DestinationImage?, Never>] = [:]
+
+    /// City (lowercased) → Wikipedia article title (English wiki has the
+    /// best image coverage for landmarks). Add more here over time.
+    private static let landmarkMap: [String: String] = [
+        "barcelona": "Sagrada Família",
+        "paris": "Eiffel Tower",
+        "london": "Tower Bridge",
+        "rom": "Colosseum",
+        "rome": "Colosseum",
+        "florenz": "Florence Cathedral",
+        "venedig": "St Mark's Square",
+        "venice": "St Mark's Square",
+        "tokio": "Tokyo Tower",
+        "tokyo": "Tokyo Tower",
+        "kyoto": "Kinkaku-ji",
+        "osaka": "Osaka Castle",
+        "new york": "Statue of Liberty",
+        "münchen": "Frauenkirche, Munich",
+        "munich": "Frauenkirche, Munich",
+        "berlin": "Brandenburg Gate",
+        "hamburg": "Elbphilharmonie",
+        "frankfurt": "Frankfurt Skyline",
+        "madrid": "Royal Palace of Madrid",
+        "valencia": "City of Arts and Sciences",
+        "amsterdam": "Anne Frank House",
+        "istanbul": "Hagia Sophia",
+        "dubai": "Burj Khalifa",
+        "bangkok": "Wat Arun",
+        "rio": "Christ the Redeemer",
+        "rio de janeiro": "Christ the Redeemer",
+        "vegas": "Las Vegas Strip",
+        "las vegas": "Las Vegas Strip",
+        "san francisco": "Golden Gate Bridge",
+        "lisbon": "Belém Tower",
+        "lissabon": "Belém Tower",
+        "athens": "Parthenon",
+        "athen": "Parthenon",
+        "prag": "Charles Bridge",
+        "prague": "Charles Bridge",
+        "wien": "Schönbrunn Palace",
+        "vienna": "Schönbrunn Palace",
+    ]
+
+    func image(for destination: String) async -> DestinationImage? {
+        let key = destination.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return nil }
+
+        if let cached = cache[key] { return cached }
+        if let task = inflight[key] { return await task.value }
+
+        let task = Task<DestinationImage?, Never> { [weak self] in
+            guard let self else { return nil }
+            let title = Self.landmarkMap[key] ?? destination
+            if let primary = await self.fetchWikipedia(title: title) {
+                return primary
+            }
+            if title != destination {
+                return await self.fetchWikipedia(title: destination)
+            }
+            return nil
+        }
+        inflight[key] = task
+        let result = await task.value
+        inflight[key] = nil
+        cache[key] = result
+        return result
+    }
+
+    private nonisolated func fetchWikipedia(title: String) async -> DestinationImage? {
+        let normalized = title.replacingOccurrences(of: " ", with: "_")
+        guard let encoded = normalized.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+              let url = URL(string: "https://en.wikipedia.org/api/rest_v1/page/summary/\(encoded)")
+        else { return nil }
+
+        var request = URLRequest(url: url)
+        request.setValue("MyVoyage iOS prototype (https://github.com/Hoepker/MyVoyage)", forHTTPHeaderField: "User-Agent")
+
+        do {
+            let (data, _) = try await URLSession.shared.data(for: request)
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+
+            let imageDict = (json["originalimage"] as? [String: Any]) ?? (json["thumbnail"] as? [String: Any])
+            guard let source = imageDict?["source"] as? String,
+                  let imageURL = URL(string: source) else { return nil }
+
+            let pageTitle = (json["title"] as? String) ?? title
+            return DestinationImage(url: imageURL, attribution: "Wikipedia · \(pageTitle)")
+        } catch {
+            return nil
+        }
+    }
+}
+
+// MARK: - Destination Image View
+
+struct DestinationImageView<Fallback: View>: View {
+    let destination: String
+    let contentMode: ContentMode
+    let fallback: () -> Fallback
+
+    @State private var image: DestinationImage?
+
+    init(
+        destination: String,
+        contentMode: ContentMode = .fill,
+        @ViewBuilder fallback: @escaping () -> Fallback
+    ) {
+        self.destination = destination
+        self.contentMode = contentMode
+        self.fallback = fallback
+    }
+
+    var body: some View {
+        Group {
+            if let image {
+                AsyncImage(url: image.url, transaction: Transaction(animation: .easeInOut(duration: 0.35))) { phase in
+                    switch phase {
+                    case .success(let img):
+                        img.resizable().aspectRatio(contentMode: contentMode)
+                    case .failure:
+                        fallback()
+                    case .empty:
+                        fallback()
+                    @unknown default:
+                        fallback()
+                    }
+                }
+            } else {
+                fallback()
+            }
+        }
+        .task(id: destination) {
+            guard !destination.isEmpty else { image = nil; return }
+            image = await DestinationImageService.shared.image(for: destination)
         }
     }
 }
