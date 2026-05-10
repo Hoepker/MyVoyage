@@ -1680,152 +1680,78 @@ struct TripWizardView: View {
     }
 
     var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                backdrop.ignoresSafeArea()
-                VStack(spacing: 0) {
-                    headerBar.frame(maxWidth: .infinity)
-                    content.frame(maxWidth: .infinity)
-                    footerBar.frame(maxWidth: .infinity)
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    progressBar
+
+                    Group {
+                        switch currentStep {
+                        case .where_:           WhereStepView(data: data)
+                        case .when_:            WhenStepView(data: data)
+                        case .who:              WhoStepView(data: data)
+                        case .style:            StyleStepView(data: data)
+                        case .moreDestinations: MoreDestinationsStepView(data: data)
+                        case .transport:        TransportStepView(data: data)
+                        case .accommodation:    AccommodationStepView(data: data)
+                        case .summary:          SummaryStepView(data: data)
+                        }
+                    }
+                    .id(currentStep)
+                    .transition(.opacity)
                 }
-                .frame(width: geo.size.width, height: geo.size.height)
+                .padding()
             }
+            .background(AppTheme.bg)
+            .navigationTitle("Schritt \(currentIndex + 1) von \(visibleSteps.count)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(AppTheme.bg, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Abbrechen") { dismiss() }
+                }
+                ToolbarItem(placement: .bottomBar) {
+                    HStack {
+                        if currentIndex > 0 {
+                            Button {
+                                goingForward = false
+                                withAnimation { currentIndex -= 1 }
+                            } label: {
+                                Label("Zurück", systemImage: "chevron.left")
+                            }
+                        }
+                        Spacer()
+                        Button {
+                            advance()
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(currentStep == .summary ? "Reise erstellen" : "Weiter")
+                                Image(systemName: currentStep == .summary ? "sparkles" : "chevron.right")
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(currentStep.accent)
+                        .disabled(!data.canContinue(from: currentStep))
+                    }
+                }
+            }
+            .toolbar(.visible, for: .bottomBar)
+            .toolbarBackground(.visible, for: .bottomBar)
         }
         .preferredColorScheme(.dark)
     }
 
-    private var backdrop: some View {
-        ZStack {
-            AppTheme.bg
-            Circle()
-                .fill(currentStep.accent.opacity(0.18))
-                .frame(width: 460, height: 460)
-                .blur(radius: 110)
-                .offset(x: -100, y: -260)
-                .animation(.easeInOut(duration: 0.6), value: currentStep)
-            Circle()
-                .fill(currentStep.accent.opacity(0.10))
-                .frame(width: 360, height: 360)
-                .blur(radius: 100)
-                .offset(x: 140, y: 280)
-                .animation(.easeInOut(duration: 0.6), value: currentStep)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .clipped()
-    }
-
-    private var headerBar: some View {
-        VStack(spacing: 12) {
-            HStack {
-                Button {
-                    dismiss()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(AppTheme.text)
-                        .frame(width: 32, height: 32)
-                        .background(Color.white.opacity(0.06), in: Circle())
-                }
-                Spacer()
-                Text("Neue Reise · \(currentIndex + 1)/\(visibleSteps.count)")
-                    .font(.system(size: 11, weight: .medium))
-                    .tracking(1.5)
-                    .foregroundStyle(AppTheme.textMuted)
-                Spacer()
-                Color.clear.frame(width: 32, height: 32)
+    private var progressBar: some View {
+        HStack(spacing: 4) {
+            ForEach(0..<visibleSteps.count, id: \.self) { i in
+                Capsule()
+                    .fill(i <= currentIndex ? currentStep.accent : Color.gray.opacity(0.25))
+                    .frame(height: 4)
             }
-
-            HStack(spacing: 4) {
-                ForEach(0..<visibleSteps.count, id: \.self) { i in
-                    Capsule()
-                        .fill(i <= currentIndex ? currentStep.accent : AppTheme.border)
-                        .frame(height: 3)
-                        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: currentIndex)
-                }
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 6)
-        .padding(.bottom, 12)
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        ScrollView {
-            VStack {
-                Group {
-                    switch currentStep {
-                    case .where_:           WhereStepView(data: data)
-                    case .when_:            WhenStepView(data: data)
-                    case .who:              WhoStepView(data: data)
-                    case .style:            StyleStepView(data: data)
-                    case .moreDestinations: MoreDestinationsStepView(data: data)
-                    case .transport:        TransportStepView(data: data)
-                    case .accommodation:    AccommodationStepView(data: data)
-                    case .summary:          SummaryStepView(data: data)
-                    }
-                }
-                .id(currentStep)
-                .transition(.opacity.combined(with: .scale(scale: 0.96)))
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 20)
-            .padding(.top, 8)
-            .padding(.bottom, 24)
         }
         .frame(maxWidth: .infinity)
-    }
-
-    private var footerBar: some View {
-        HStack(spacing: 12) {
-            if currentIndex > 0 {
-                Button {
-                    goingForward = false
-                    withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
-                        currentIndex -= 1
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "chevron.left").font(.system(size: 12, weight: .semibold))
-                        Text("Zurück").font(.system(size: 14, weight: .medium))
-                    }
-                    .foregroundStyle(AppTheme.text)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .background(Color.white.opacity(0.06), in: Capsule())
-                }
-            }
-            Spacer()
-            Button {
-                advance()
-            } label: {
-                HStack(spacing: 6) {
-                    Text(currentStep == .summary ? "Reise erstellen" : "Weiter")
-                        .font(.system(size: 14, weight: .semibold))
-                    Image(systemName: currentStep == .summary ? "sparkles" : "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
-                }
-                .foregroundStyle(.white)
-                .padding(.horizontal, 22)
-                .padding(.vertical, 13)
-                .background(
-                    LinearGradient(
-                        colors: [currentStep.accent, currentStep.accent.opacity(0.75)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    in: Capsule()
-                )
-                .shadow(color: currentStep.accent.opacity(0.4), radius: 14, y: 6)
-                .opacity(data.canContinue(from: currentStep) ? 1 : 0.45)
-            }
-            .disabled(!data.canContinue(from: currentStep))
-        }
-        .padding(.horizontal, 20)
-        .padding(.bottom, 18)
-        .padding(.top, 10)
-        .background(.ultraThinMaterial)
+        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: currentIndex)
     }
 
     private func advance() {
@@ -1903,25 +1829,21 @@ private struct WhereStepView: View {
                 subtitle: "Dein Hauptziel — die Stadt oder Region, um die sich die Reise dreht."
             )
 
-            TextField("", text: Binding(
+            TextField("z.B. Barcelona", text: Binding(
                 get: { data.destinations.first ?? "" },
                 set: {
                     if data.destinations.isEmpty { data.destinations = [$0] }
                     else { data.destinations[0] = $0 }
                 }
-            ), prompt: Text("z.B. Barcelona").foregroundStyle(AppTheme.text.opacity(0.25)))
-                .font(.system(.title3, design: .serif))
-                .foregroundStyle(AppTheme.text)
+            ))
+                .textFieldStyle(.roundedBorder)
+                .font(.title3)
                 .submitLabel(.done)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 14)
-                .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(WizardStep.where_.accent.opacity(0.45), lineWidth: 1))
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("BELIEBTE ZIELE")
-                    .font(.system(size: 10, weight: .medium)).tracking(1.5)
-                    .foregroundStyle(AppTheme.textSubtle)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
                 FlexibleChips(items: suggestions, selected: data.destinations.first ?? "") { city in
                     if data.destinations.isEmpty { data.destinations = [city] }
                     else { data.destinations[0] = city }
