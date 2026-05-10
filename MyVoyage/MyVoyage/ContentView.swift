@@ -204,6 +204,15 @@ final class TripsStore {
         return trip
     }
 
+    @discardableResult
+    func add(_ trip: Trip) -> Trip {
+        if trip.accentHex == 0x3B82F6 {
+            trip.accentHex = nextAccent()
+        }
+        trips.append(trip)
+        return trip
+    }
+
     func remove(_ trip: Trip) {
         trips.removeAll { $0.id == trip.id }
     }
@@ -293,6 +302,7 @@ struct TripsListView: View {
     let store: TripsStore
 
     @State private var pushNewTrip: Trip? = nil
+    @State private var showWizard = false
 
     private let columns = [GridItem(.adaptive(minimum: 160, maximum: 220), spacing: 14)]
 
@@ -317,6 +327,9 @@ struct TripsListView: View {
         .toolbarColorScheme(.dark, for: .navigationBar)
         .navigationDestination(item: $pushNewTrip) { trip in
             TripDetailView(trip: trip, store: store)
+        }
+        .fullScreenCover(isPresented: $showWizard) {
+            TripWizardView(store: store, pushTrip: $pushNewTrip)
         }
     }
 
@@ -377,7 +390,7 @@ struct TripsListView: View {
 
     private var newTripCard: some View {
         Button {
-            pushNewTrip = store.add()
+            showWizard = true
         } label: {
             VStack(spacing: 10) {
                 Image(systemName: "plus")
@@ -1384,6 +1397,920 @@ struct DestinationImageView<Fallback: View>: View {
             guard !destination.isEmpty else { image = nil; return }
             image = await DestinationImageService.shared.image(for: destination)
         }
+    }
+}
+
+// MARK: - Trip Wizard
+
+enum TripStyle: String, CaseIterable {
+    case singleStop, roundtrip
+    var label: String {
+        switch self {
+        case .singleStop: "Eine Stadt entdecken"
+        case .roundtrip:  "Mehrere Orte besuchen"
+        }
+    }
+    var sub: String {
+        switch self {
+        case .singleStop: "Standort, Tagesausflüge, kein Umzug"
+        case .roundtrip:  "Rundreise mit mehreren Stops"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .singleStop: "mappin.and.ellipse"
+        case .roundtrip:  "map.fill"
+        }
+    }
+}
+
+enum AccommodationStyle: String, CaseIterable {
+    case hotel, apartment, both, later
+    var label: String {
+        switch self {
+        case .hotel:     "Hotel"
+        case .apartment: "Ferienwohnung"
+        case .both:      "Beides"
+        case .later:     "Entscheide ich später"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .hotel:     "bed.double.fill"
+        case .apartment: "house.fill"
+        case .both:      "square.grid.2x2.fill"
+        case .later:     "clock.fill"
+        }
+    }
+}
+
+@Observable
+final class WizardData {
+    var destinations: [String] = [""]
+    var startDate: Date? = nil
+    var endDate: Date? = nil
+    var travelers: Travelers = Travelers(adults: 2, children: [])
+    var style: TripStyle = .singleStop
+    var transportTo: TransportType? = nil
+    var transportBetween: TransportType? = nil
+    var accommodation: AccommodationStyle? = nil
+
+    var primaryDestination: String {
+        destinations.first(where: { !$0.isEmpty }) ?? ""
+    }
+
+    var validDestinations: [String] {
+        destinations.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+    }
+
+    func canContinue(from step: WizardStep) -> Bool {
+        switch step {
+        case .where_:        return !primaryDestination.isEmpty
+        case .when_:         return true
+        case .who:           return true
+        case .style:         return true
+        case .moreDestinations: return validDestinations.count >= 2
+        case .transport:     return transportTo != nil && (style == .singleStop || transportBetween != nil)
+        case .accommodation: return accommodation != nil
+        case .summary:       return true
+        }
+    }
+}
+
+enum WizardStep: Int, CaseIterable {
+    case where_, when_, who, style, moreDestinations, transport, accommodation, summary
+
+    var titleNumber: Int {
+        WizardStep.allCases.firstIndex(of: self).map { $0 + 1 } ?? 0
+    }
+
+    var accent: Color {
+        switch self {
+        case .where_:           Color(hex: 0x3B82F6)
+        case .when_:            Color(hex: 0x10B981)
+        case .who:              Color(hex: 0x8B5CF6)
+        case .style:            Color(hex: 0xF59E0B)
+        case .moreDestinations: Color(hex: 0x06B6D4)
+        case .transport:        Color(hex: 0xEC4899)
+        case .accommodation:    Color(hex: 0xF97316)
+        case .summary:          Color(hex: 0x10B981)
+        }
+    }
+}
+
+struct TripWizardView: View {
+    let store: TripsStore
+    @Binding var pushTrip: Trip?
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var data = WizardData()
+    @State private var currentIndex = 0
+    @State private var goingForward = true
+
+    private var visibleSteps: [WizardStep] {
+        WizardStep.allCases.filter { step in
+            if step == .moreDestinations { return data.style == .roundtrip }
+            return true
+        }
+    }
+
+    private var currentStep: WizardStep {
+        visibleSteps[min(currentIndex, visibleSteps.count - 1)]
+    }
+
+    var body: some View {
+        ZStack {
+            backdrop
+            VStack(spacing: 0) {
+                headerBar
+                content
+                footerBar
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    private var backdrop: some View {
+        ZStack {
+            AppTheme.bg.ignoresSafeArea()
+            Circle()
+                .fill(currentStep.accent.opacity(0.18))
+                .frame(width: 460, height: 460)
+                .blur(radius: 110)
+                .offset(x: -100, y: -260)
+                .animation(.easeInOut(duration: 0.6), value: currentStep)
+            Circle()
+                .fill(currentStep.accent.opacity(0.10))
+                .frame(width: 360, height: 360)
+                .blur(radius: 100)
+                .offset(x: 140, y: 280)
+                .animation(.easeInOut(duration: 0.6), value: currentStep)
+        }
+    }
+
+    private var headerBar: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(AppTheme.text)
+                        .frame(width: 32, height: 32)
+                        .background(Color.white.opacity(0.06), in: Circle())
+                }
+                Spacer()
+                Text("Neue Reise · \(currentIndex + 1)/\(visibleSteps.count)")
+                    .font(.system(size: 11, weight: .medium))
+                    .tracking(1.5)
+                    .foregroundStyle(AppTheme.textMuted)
+                Spacer()
+                Color.clear.frame(width: 32, height: 32)
+            }
+
+            HStack(spacing: 4) {
+                ForEach(0..<visibleSteps.count, id: \.self) { i in
+                    Capsule()
+                        .fill(i <= currentIndex ? currentStep.accent : AppTheme.border)
+                        .frame(height: 3)
+                        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: currentIndex)
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 6)
+        .padding(.bottom, 12)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        ScrollView {
+            VStack {
+                Group {
+                    switch currentStep {
+                    case .where_:           WhereStepView(data: data)
+                    case .when_:            WhenStepView(data: data)
+                    case .who:              WhoStepView(data: data)
+                    case .style:            StyleStepView(data: data)
+                    case .moreDestinations: MoreDestinationsStepView(data: data)
+                    case .transport:        TransportStepView(data: data)
+                    case .accommodation:    AccommodationStepView(data: data)
+                    case .summary:          SummaryStepView(data: data)
+                    }
+                }
+                .id(currentStep)
+                .transition(
+                    .asymmetric(
+                        insertion: .move(edge: goingForward ? .trailing : .leading).combined(with: .opacity),
+                        removal: .move(edge: goingForward ? .leading : .trailing).combined(with: .opacity)
+                    )
+                )
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
+            .padding(.bottom, 24)
+        }
+    }
+
+    private var footerBar: some View {
+        HStack(spacing: 12) {
+            if currentIndex > 0 {
+                Button {
+                    goingForward = false
+                    withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
+                        currentIndex -= 1
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.left").font(.system(size: 12, weight: .semibold))
+                        Text("Zurück").font(.system(size: 14, weight: .medium))
+                    }
+                    .foregroundStyle(AppTheme.text)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(Color.white.opacity(0.06), in: Capsule())
+                }
+            }
+            Spacer()
+            Button {
+                advance()
+            } label: {
+                HStack(spacing: 6) {
+                    Text(currentStep == .summary ? "Reise erstellen" : "Weiter")
+                        .font(.system(size: 14, weight: .semibold))
+                    Image(systemName: currentStep == .summary ? "sparkles" : "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 22)
+                .padding(.vertical, 13)
+                .background(
+                    LinearGradient(
+                        colors: [currentStep.accent, currentStep.accent.opacity(0.75)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    in: Capsule()
+                )
+                .shadow(color: currentStep.accent.opacity(0.4), radius: 14, y: 6)
+                .opacity(data.canContinue(from: currentStep) ? 1 : 0.45)
+            }
+            .disabled(!data.canContinue(from: currentStep))
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 18)
+        .padding(.top, 10)
+        .background(.ultraThinMaterial)
+    }
+
+    private func advance() {
+        if currentStep == .summary {
+            finish()
+            return
+        }
+        goingForward = true
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
+            currentIndex = min(currentIndex + 1, visibleSteps.count - 1)
+        }
+    }
+
+    private func finish() {
+        let trip = TripBuilder.build(from: data)
+        store.add(trip)
+        pushTrip = trip
+        dismiss()
+    }
+}
+
+// MARK: - Wizard Step Hero
+
+private struct WizardHero: View {
+    let icon: String
+    let accent: Color
+    let title: String
+    let subtitle: String
+
+    @State private var animate = false
+
+    var body: some View {
+        VStack(spacing: 12) {
+            ZStack {
+                Circle().fill(accent.opacity(0.15)).frame(width: 110, height: 110)
+                Circle().stroke(accent.opacity(0.4), lineWidth: 1.5).frame(width: 130, height: 130)
+                Image(systemName: icon)
+                    .font(.system(size: 44, weight: .light))
+                    .foregroundStyle(accent)
+            }
+            .scaleEffect(animate ? 1 : 0.6)
+            .opacity(animate ? 1 : 0)
+            .animation(.spring(response: 0.55, dampingFraction: 0.7), value: animate)
+            .onAppear { animate = true }
+
+            Text(title)
+                .font(.system(.title, design: .serif).weight(.bold))
+                .foregroundStyle(AppTheme.text)
+                .multilineTextAlignment(.center)
+            Text(subtitle)
+                .font(.system(size: 14))
+                .foregroundStyle(AppTheme.textMuted)
+                .multilineTextAlignment(.center)
+        }
+        .padding(.top, 8)
+        .padding(.bottom, 18)
+    }
+}
+
+// MARK: - Wizard: Where
+
+private struct WhereStepView: View {
+    @Bindable var data: WizardData
+    private let suggestions = ["Paris", "Rom", "Barcelona", "London", "New York", "Tokio", "Lissabon", "Wien"]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            WizardHero(
+                icon: "globe.europe.africa.fill",
+                accent: WizardStep.where_.accent,
+                title: "Wohin geht es?",
+                subtitle: "Dein Hauptziel — die Stadt oder Region, um die sich die Reise dreht."
+            )
+
+            TextField("", text: Binding(
+                get: { data.destinations.first ?? "" },
+                set: {
+                    if data.destinations.isEmpty { data.destinations = [$0] }
+                    else { data.destinations[0] = $0 }
+                }
+            ), prompt: Text("z.B. Barcelona").foregroundStyle(AppTheme.text.opacity(0.25)))
+                .font(.system(.title3, design: .serif))
+                .foregroundStyle(AppTheme.text)
+                .submitLabel(.done)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 14)
+                .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(WizardStep.where_.accent.opacity(0.45), lineWidth: 1))
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("BELIEBTE ZIELE")
+                    .font(.system(size: 10, weight: .medium)).tracking(1.5)
+                    .foregroundStyle(AppTheme.textSubtle)
+                FlexibleChips(items: suggestions, selected: data.destinations.first ?? "") { city in
+                    if data.destinations.isEmpty { data.destinations = [city] }
+                    else { data.destinations[0] = city }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Wizard: When
+
+private struct WhenStepView: View {
+    @Bindable var data: WizardData
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            WizardHero(
+                icon: "calendar",
+                accent: WizardStep.when_.accent,
+                title: "Wann möchtest du reisen?",
+                subtitle: "Reisezeit eingrenzen — du kannst es später jederzeit anpassen."
+            )
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("ABREISE")
+                    .font(.system(size: 10, weight: .medium)).tracking(1.5)
+                    .foregroundStyle(AppTheme.textSubtle)
+                DatePicker("", selection: Binding(
+                    get: { data.startDate ?? Date() },
+                    set: { data.startDate = $0 }
+                ), in: Date()..., displayedComponents: .date)
+                    .datePickerStyle(.compact).labelsHidden()
+                    .colorScheme(.dark).tint(WizardStep.when_.accent)
+            }
+            .padding(14)
+            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(AppTheme.border, lineWidth: 1))
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("RÜCKKEHR")
+                    .font(.system(size: 10, weight: .medium)).tracking(1.5)
+                    .foregroundStyle(AppTheme.textSubtle)
+                DatePicker("", selection: Binding(
+                    get: { data.endDate ?? data.startDate ?? Date() },
+                    set: { data.endDate = $0 }
+                ), in: (data.startDate ?? Date())..., displayedComponents: .date)
+                    .datePickerStyle(.compact).labelsHidden()
+                    .colorScheme(.dark).tint(WizardStep.when_.accent)
+            }
+            .padding(14)
+            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(AppTheme.border, lineWidth: 1))
+
+            HStack(spacing: 8) {
+                quickRange("Wochenende", days: 3)
+                quickRange("1 Woche", days: 7)
+                quickRange("2 Wochen", days: 14)
+            }
+            .padding(.top, 4)
+
+            Button {
+                data.startDate = nil
+                data.endDate = nil
+            } label: {
+                Text("Datum noch flexibel")
+                    .font(.system(size: 12))
+                    .foregroundStyle(AppTheme.textSubtle)
+                    .underline()
+            }
+            .padding(.top, 4)
+        }
+    }
+
+    private func quickRange(_ label: String, days: Int) -> some View {
+        Button {
+            let start = data.startDate ?? Date()
+            data.startDate = start
+            data.endDate = Calendar.current.date(byAdding: .day, value: days, to: start)
+        } label: {
+            Text(label)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(AppTheme.text)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color.white.opacity(0.06), in: Capsule())
+                .overlay(Capsule().stroke(WizardStep.when_.accent.opacity(0.4), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Wizard: Who
+
+private struct WhoStepView: View {
+    @Bindable var data: WizardData
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            WizardHero(
+                icon: "person.2.fill",
+                accent: WizardStep.who.accent,
+                title: "Wer reist mit?",
+                subtitle: "Damit Buchungsportale gleich die richtige Anzahl an Tickets vorschlagen."
+            )
+
+            counterRow(
+                title: "Erwachsene",
+                sub: "Ab 12 Jahren",
+                value: data.travelers.adults,
+                canDec: data.travelers.adults > 1,
+                canInc: data.travelers.adults < 9,
+                onDec: { data.travelers.adults -= 1 },
+                onInc: { data.travelers.adults += 1 }
+            )
+            counterRow(
+                title: "Kinder",
+                sub: "Bis 11 Jahre",
+                value: data.travelers.children.count,
+                canDec: !data.travelers.children.isEmpty,
+                canInc: data.travelers.children.count < 8,
+                onDec: { data.travelers.children.removeLast() },
+                onInc: { data.travelers.children.append(5) }
+            )
+        }
+    }
+
+    private func counterRow(
+        title: String, sub: String, value: Int,
+        canDec: Bool, canInc: Bool,
+        onDec: @escaping () -> Void, onInc: @escaping () -> Void
+    ) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 16, weight: .medium)).foregroundStyle(AppTheme.text)
+                Text(sub).font(.system(size: 11)).foregroundStyle(AppTheme.textSubtle)
+            }
+            Spacer()
+            HStack(spacing: 14) {
+                circleBtn(systemName: "minus", enabled: canDec, action: onDec)
+                Text("\(value)")
+                    .font(.system(size: 20, weight: .semibold, design: .serif))
+                    .foregroundStyle(AppTheme.text).frame(minWidth: 28)
+                circleBtn(systemName: "plus", enabled: canInc, action: onInc)
+            }
+        }
+        .padding(16)
+        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(AppTheme.border, lineWidth: 1))
+    }
+
+    private func circleBtn(systemName: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(enabled ? AppTheme.text : AppTheme.text.opacity(0.2))
+                .frame(width: 34, height: 34)
+                .background(Color.white.opacity(0.06), in: Circle())
+                .overlay(Circle().stroke(WizardStep.who.accent.opacity(enabled ? 0.45 : 0.12), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+    }
+}
+
+// MARK: - Wizard: Style
+
+private struct StyleStepView: View {
+    @Bindable var data: WizardData
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            WizardHero(
+                icon: "map.fill",
+                accent: WizardStep.style.accent,
+                title: "Wie soll deine Reise aussehen?",
+                subtitle: "Bestimmst, ob wir nur einen Aufenthalt oder mehrere Stops planen."
+            )
+            ForEach(TripStyle.allCases, id: \.self) { style in
+                styleCard(style)
+            }
+        }
+    }
+
+    private func styleCard(_ style: TripStyle) -> some View {
+        let selected = data.style == style
+        return Button {
+            data.style = style
+        } label: {
+            HStack(spacing: 14) {
+                Image(systemName: style.icon)
+                    .font(.system(size: 22, weight: .light))
+                    .foregroundStyle(selected ? .white : WizardStep.style.accent)
+                    .frame(width: 50, height: 50)
+                    .background(selected ? WizardStep.style.accent : WizardStep.style.accent.opacity(0.15), in: Circle())
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(style.label)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(AppTheme.text)
+                    Text(style.sub)
+                        .font(.system(size: 12))
+                        .foregroundStyle(AppTheme.textMuted)
+                }
+                Spacer()
+                if selected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(WizardStep.style.accent)
+                }
+            }
+            .padding(16)
+            .background(Color.white.opacity(selected ? 0.07 : 0.04), in: RoundedRectangle(cornerRadius: 14))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(selected ? WizardStep.style.accent : AppTheme.border, lineWidth: selected ? 2 : 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Wizard: More Destinations
+
+private struct MoreDestinationsStepView: View {
+    @Bindable var data: WizardData
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            WizardHero(
+                icon: "list.bullet.indent",
+                accent: WizardStep.moreDestinations.accent,
+                title: "Welche weiteren Stops?",
+                subtitle: "Reihenfolge entspricht der Reise-Route. Mindestens zwei Ziele."
+            )
+
+            VStack(spacing: 8) {
+                ForEach(Array(data.destinations.enumerated()), id: \.offset) { idx, _ in
+                    HStack(spacing: 10) {
+                        Text("\(idx + 1)")
+                            .font(.system(size: 12, weight: .bold, design: .serif))
+                            .foregroundStyle(WizardStep.moreDestinations.accent)
+                            .frame(width: 26, height: 26)
+                            .background(WizardStep.moreDestinations.accent.opacity(0.15), in: Circle())
+                        TextField("", text: Binding(
+                            get: { data.destinations[idx] },
+                            set: { data.destinations[idx] = $0 }
+                        ), prompt: Text(idx == 0 ? "Erstes Ziel" : "Nächster Stop")
+                            .foregroundStyle(AppTheme.text.opacity(0.25)))
+                            .font(.system(size: 15))
+                            .foregroundStyle(AppTheme.text)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 10)
+                            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppTheme.border, lineWidth: 1))
+                        if data.destinations.count > 1 {
+                            Button(role: .destructive) {
+                                data.destinations.remove(at: idx)
+                            } label: {
+                                Image(systemName: "minus.circle.fill")
+                                    .foregroundStyle(.red.opacity(0.7))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+
+            Button {
+                data.destinations.append("")
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "plus")
+                    Text("Weiteres Ziel hinzufügen")
+                }
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(WizardStep.moreDestinations.accent)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(WizardStep.moreDestinations.accent.opacity(0.1), in: Capsule())
+                .overlay(Capsule().stroke(WizardStep.moreDestinations.accent.opacity(0.4), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+}
+
+// MARK: - Wizard: Transport
+
+private struct TransportStepView: View {
+    @Bindable var data: WizardData
+
+    private let toOptions: [TransportType] = [.flight, .train, .car, .bus]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            WizardHero(
+                icon: "airplane.departure",
+                accent: WizardStep.transport.accent,
+                title: "Wie kommst du hin?",
+                subtitle: "Erste Etappe — von zu Hause zum ersten Ziel."
+            )
+
+            transportGrid(selected: data.transportTo) { picked in
+                data.transportTo = picked
+            }
+
+            if data.style == .roundtrip {
+                Text("ZWISCHEN DEN STOPS")
+                    .font(.system(size: 10, weight: .medium)).tracking(1.5)
+                    .foregroundStyle(AppTheme.textSubtle)
+                    .padding(.top, 8)
+                transportGrid(selected: data.transportBetween) { picked in
+                    data.transportBetween = picked
+                }
+            }
+        }
+    }
+
+    private func transportGrid(selected: TransportType?, onSelect: @escaping (TransportType) -> Void) -> some View {
+        let columns = [GridItem(.adaptive(minimum: 130), spacing: 10)]
+        return LazyVGrid(columns: columns, spacing: 10) {
+            ForEach(toOptions) { type in
+                let isSel = selected == type
+                Button { onSelect(type) } label: {
+                    VStack(spacing: 6) {
+                        Image(systemName: type.systemImage)
+                            .font(.system(size: 22, weight: .light))
+                            .foregroundStyle(isSel ? .white : type.color)
+                        Text(type.label)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(AppTheme.text)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+                    .background(isSel ? type.color.opacity(0.4) : Color.white.opacity(0.04),
+                                in: RoundedRectangle(cornerRadius: 12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(isSel ? type.color : AppTheme.border, lineWidth: isSel ? 2 : 1)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+}
+
+// MARK: - Wizard: Accommodation
+
+private struct AccommodationStepView: View {
+    @Bindable var data: WizardData
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            WizardHero(
+                icon: "bed.double.fill",
+                accent: WizardStep.accommodation.accent,
+                title: "Wo übernachtest du?",
+                subtitle: "Wir legen dir pro Stadt einen Eintrag an — Details ergänzt du später."
+            )
+            ForEach(AccommodationStyle.allCases, id: \.self) { opt in
+                let sel = data.accommodation == opt
+                Button {
+                    data.accommodation = opt
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: opt.icon)
+                            .font(.system(size: 18, weight: .light))
+                            .foregroundStyle(sel ? .white : WizardStep.accommodation.accent)
+                            .frame(width: 42, height: 42)
+                            .background(sel ? WizardStep.accommodation.accent : WizardStep.accommodation.accent.opacity(0.14), in: Circle())
+                        Text(opt.label)
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(AppTheme.text)
+                        Spacer()
+                        if sel { Image(systemName: "checkmark.circle.fill").foregroundStyle(WizardStep.accommodation.accent) }
+                    }
+                    .padding(14)
+                    .background(Color.white.opacity(sel ? 0.07 : 0.04), in: RoundedRectangle(cornerRadius: 12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(sel ? WizardStep.accommodation.accent : AppTheme.border, lineWidth: sel ? 2 : 1)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+}
+
+// MARK: - Wizard: Summary
+
+private struct SummaryStepView: View {
+    @Bindable var data: WizardData
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            WizardHero(
+                icon: "sparkles",
+                accent: WizardStep.summary.accent,
+                title: "Bereit?",
+                subtitle: "Wir bauen dir das Gerüst deiner Reise — Details kannst du danach ergänzen."
+            )
+
+            VStack(alignment: .leading, spacing: 8) {
+                summaryRow("globe.europe.africa.fill", "Ziele",
+                           data.validDestinations.isEmpty ? "—" : data.validDestinations.joined(separator: " · "))
+                summaryRow("calendar", "Zeitraum", dateLabel)
+                summaryRow("person.2.fill", "Reisende", data.travelers.summary)
+                summaryRow(data.style.icon, "Stil", data.style.label)
+                summaryRow("airplane",
+                           "Anreise",
+                           data.transportTo.map { $0.label } ?? "—")
+                if data.style == .roundtrip {
+                    summaryRow("arrow.triangle.swap", "Zwischen Stops",
+                               data.transportBetween.map { $0.label } ?? "—")
+                }
+                summaryRow("bed.double.fill", "Übernachtung",
+                           data.accommodation?.label ?? "—")
+            }
+            .padding(14)
+            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(AppTheme.border, lineWidth: 1))
+        }
+    }
+
+    private var dateLabel: String {
+        guard let s = data.startDate else { return "Flexibel" }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "de_DE")
+        f.dateFormat = "d. MMM yyyy"
+        if let e = data.endDate, e != s {
+            return "\(f.string(from: s)) – \(f.string(from: e))"
+        }
+        return f.string(from: s)
+    }
+
+    private func summaryRow(_ icon: String, _ label: String, _ value: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 13))
+                .foregroundStyle(WizardStep.summary.accent)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label.uppercased())
+                    .font(.system(size: 9, weight: .medium)).tracking(1.2)
+                    .foregroundStyle(AppTheme.textSubtle)
+                Text(value).font(.system(size: 14)).foregroundStyle(AppTheme.text)
+            }
+            Spacer()
+        }
+    }
+}
+
+// MARK: - Flexible Chips
+
+private struct FlexibleChips: View {
+    let items: [String]
+    let selected: String
+    let onTap: (String) -> Void
+
+    var body: some View {
+        FlowLayout(spacing: 8) {
+            ForEach(items, id: \.self) { item in
+                let sel = item == selected
+                Button { onTap(item) } label: {
+                    Text(item)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(sel ? .white : AppTheme.text)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(sel ? WizardStep.where_.accent : Color.white.opacity(0.05), in: Capsule())
+                        .overlay(Capsule().stroke(sel ? Color.clear : AppTheme.border, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+}
+
+private struct FlowLayout: Layout {
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var x: CGFloat = 0, y: CGFloat = 0, lineH: CGFloat = 0
+        for s in subviews {
+            let size = s.sizeThatFits(.unspecified)
+            if x + size.width > maxWidth {
+                x = 0; y += lineH + spacing; lineH = 0
+            }
+            x += size.width + spacing
+            lineH = max(lineH, size.height)
+        }
+        return CGSize(width: maxWidth.isFinite ? maxWidth : x, height: y + lineH)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x: CGFloat = bounds.minX, y: CGFloat = bounds.minY, lineH: CGFloat = 0
+        for s in subviews {
+            let size = s.sizeThatFits(.unspecified)
+            if x + size.width > bounds.maxX {
+                x = bounds.minX; y += lineH + spacing; lineH = 0
+            }
+            s.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            lineH = max(lineH, size.height)
+        }
+    }
+}
+
+// MARK: - Trip Builder
+
+enum TripBuilder {
+    static func build(from data: WizardData) -> Trip {
+        let dests = data.validDestinations
+        let cal = Calendar.current
+        let totalDays: Int = {
+            guard let s = data.startDate, let e = data.endDate else { return 7 }
+            return max(1, cal.dateComponents([.day], from: s, to: e).day ?? 7)
+        }()
+        let perStop = max(1, totalDays / max(1, dests.count))
+        let baseDate = data.startDate ?? Date()
+
+        var segments: [TripSegment] = []
+
+        if let mode = data.transportTo, let first = dests.first {
+            segments.append(TripSegment(type: mode, from: "", to: first, date: baseDate))
+        }
+
+        for (idx, dest) in dests.enumerated() {
+            let arrival = cal.date(byAdding: .day, value: idx * perStop, to: baseDate) ?? baseDate
+
+            if data.accommodation != .later {
+                segments.append(TripSegment(type: .hotel, from: "", to: dest, date: arrival))
+            }
+            if data.style == .roundtrip,
+               idx < dests.count - 1,
+               let between = data.transportBetween {
+                let next = dests[idx + 1]
+                let depart = cal.date(byAdding: .day, value: (idx + 1) * perStop, to: baseDate) ?? arrival
+                segments.append(TripSegment(type: between, from: dest, to: next, date: depart))
+            }
+        }
+
+        if let mode = data.transportTo, let last = dests.last {
+            let returnDate = data.endDate ?? cal.date(byAdding: .day, value: totalDays, to: baseDate)
+            segments.append(TripSegment(type: mode, from: last, to: "", date: returnDate))
+        }
+
+        let primary = dests.first ?? "Neue Reise"
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "de_DE")
+        f.dateFormat = "MMMM yyyy"
+        let monthLabel = data.startDate.map { f.string(from: $0) } ?? ""
+        let name = monthLabel.isEmpty ? primary : "\(primary) \(monthLabel)"
+
+        return Trip(name: name, travelers: data.travelers, segments: segments)
     }
 }
 
