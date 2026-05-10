@@ -1681,19 +1681,20 @@ struct TripWizardView: View {
 
     var body: some View {
         ZStack {
-            backdrop
+            backdrop.ignoresSafeArea()
             VStack(spacing: 0) {
                 headerBar
                 content
                 footerBar
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .preferredColorScheme(.dark)
     }
 
     private var backdrop: some View {
         ZStack {
-            AppTheme.bg.ignoresSafeArea()
+            AppTheme.bg
             Circle()
                 .fill(currentStep.accent.opacity(0.18))
                 .frame(width: 460, height: 460)
@@ -1707,6 +1708,8 @@ struct TripWizardView: View {
                 .offset(x: 140, y: 280)
                 .animation(.easeInOut(duration: 0.6), value: currentStep)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
     }
 
     private var headerBar: some View {
@@ -1869,11 +1872,14 @@ private struct WizardHero: View {
                 .font(.system(.title, design: .serif).weight(.bold))
                 .foregroundStyle(AppTheme.text)
                 .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
             Text(subtitle)
                 .font(.system(size: 14))
                 .foregroundStyle(AppTheme.textMuted)
                 .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
         }
+        .frame(maxWidth: .infinity)
         .padding(.top, 8)
         .padding(.bottom, 18)
     }
