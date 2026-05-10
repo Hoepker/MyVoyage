@@ -1680,14 +1680,16 @@ struct TripWizardView: View {
     }
 
     var body: some View {
-        ZStack {
-            backdrop.ignoresSafeArea()
-            VStack(spacing: 0) {
-                headerBar
-                content
-                footerBar
+        GeometryReader { geo in
+            ZStack {
+                backdrop.ignoresSafeArea()
+                VStack(spacing: 0) {
+                    headerBar.frame(maxWidth: .infinity)
+                    content.frame(maxWidth: .infinity)
+                    footerBar.frame(maxWidth: .infinity)
+                }
+                .frame(width: geo.size.width, height: geo.size.height)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .preferredColorScheme(.dark)
     }
@@ -1764,14 +1766,15 @@ struct TripWizardView: View {
                     }
                 }
                 .id(currentStep)
-                .transition(
-                    .opacity.combined(with: .scale(scale: 0.96))
-                )
+                .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(maxWidth: .infinity)
             .padding(.horizontal, 20)
             .padding(.top, 8)
             .padding(.bottom, 24)
         }
+        .frame(maxWidth: .infinity)
     }
 
     private var footerBar: some View {
@@ -2401,17 +2404,24 @@ private struct FlowLayout: Layout {
     var spacing: CGFloat = 6
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let maxWidth = proposal.width ?? .infinity
+        // Fall back to a sane width when the parent doesn't propose one
+        // (e.g. inside an unconstrained ScrollView). Without this the
+        // layout reported its full unwrapped intrinsic width and pushed
+        // every ancestor wider than the screen.
+        let maxWidth: CGFloat = {
+            if let w = proposal.width, w > 0 { return w }
+            return 320
+        }()
         var x: CGFloat = 0, y: CGFloat = 0, lineH: CGFloat = 0
         for s in subviews {
             let size = s.sizeThatFits(.unspecified)
-            if x + size.width > maxWidth {
+            if x + size.width > maxWidth, x > 0 {
                 x = 0; y += lineH + spacing; lineH = 0
             }
             x += size.width + spacing
             lineH = max(lineH, size.height)
         }
-        return CGSize(width: maxWidth.isFinite ? maxWidth : x, height: y + lineH)
+        return CGSize(width: maxWidth, height: y + lineH)
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
