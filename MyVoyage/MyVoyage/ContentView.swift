@@ -59,8 +59,8 @@ enum TransportType: String, CaseIterable, Identifiable, Codable {
     }
 }
 
-struct TripSegment: Identifiable, Equatable {
-    let id = UUID()
+struct TripSegment: Identifiable, Equatable, Codable {
+    var id: UUID = UUID()
     var type: TransportType = .flight
     var from: String = ""
     var to: String = ""
@@ -68,7 +68,7 @@ struct TripSegment: Identifiable, Equatable {
     var note: String = ""
 }
 
-struct Travelers: Equatable {
+struct Travelers: Equatable, Codable {
     var adults: Int = 2
     var children: [Int] = []
 
@@ -85,8 +85,8 @@ struct Travelers: Equatable {
 // MARK: - Trip
 
 @Observable
-final class Trip: Identifiable, Hashable {
-    let id = UUID()
+final class Trip: Identifiable, Hashable, Codable {
+    let id: UUID
     var name: String
     var travelers: Travelers
     var segments: [TripSegment]
@@ -96,12 +96,36 @@ final class Trip: Identifiable, Hashable {
         name: String,
         travelers: Travelers = Travelers(),
         segments: [TripSegment] = [],
-        accentHex: UInt32 = 0x3B82F6
+        accentHex: UInt32 = 0x3B82F6,
+        id: UUID = UUID()
     ) {
+        self.id = id
         self.name = name
         self.travelers = travelers
         self.segments = segments
         self.accentHex = accentHex
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, travelers, segments, accentHex
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(UUID.self, forKey: .id)
+        self.name = try c.decode(String.self, forKey: .name)
+        self.travelers = try c.decode(Travelers.self, forKey: .travelers)
+        self.segments = try c.decode([TripSegment].self, forKey: .segments)
+        self.accentHex = try c.decode(UInt32.self, forKey: .accentHex)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(travelers, forKey: .travelers)
+        try c.encode(segments, forKey: .segments)
+        try c.encode(accentHex, forKey: .accentHex)
     }
 
     var accent: Color { Color(hex: accentHex) }
@@ -190,17 +214,82 @@ final class Trip: Identifiable, Hashable {
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
 
+// MARK: - Persistence
+
+enum PersistenceService {
+    static let fileURL: URL = {
+        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        return dir.appendingPathComponent("trips.json")
+    }()
+
+    private static let encoder: JSONEncoder = {
+        let e = JSONEncoder()
+        e.dateEncodingStrategy = .iso8601
+        e.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return e
+    }()
+
+    private static let decoder: JSONDecoder = {
+        let d = JSONDecoder()
+        d.dateDecodingStrategy = .iso8601
+        return d
+    }()
+
+    static func load() -> [Trip]? {
+        guard let data = try? Data(contentsOf: fileURL),
+              let trips = try? decoder.decode([Trip].self, from: data) else {
+            return nil
+        }
+        return trips
+    }
+
+    static func save(_ trips: [Trip]) {
+        do {
+            let data = try encoder.encode(trips)
+            try data.write(to: fileURL, options: .atomic)
+        } catch {
+            print("PersistenceService.save error: \(error)")
+        }
+    }
+
+    static func clear() {
+        try? FileManager.default.removeItem(at: fileURL)
+    }
+}
+
 // MARK: - Trips Store
 
 @Observable
 final class TripsStore {
     var trips: [Trip] = []
 
-    init() { seedDemo() }
+    init() {
+        if let loaded = PersistenceService.load() {
+            trips = loaded
+        } else {
+            seedDemo()
+            save()
+        }
+    }
+
+    func save() {
+        PersistenceService.save(trips)
+    }
+
+    func resetToDemo() {
+        seedDemo()
+        save()
+    }
+
+    func removeAll() {
+        trips.removeAll()
+        save()
+    }
 
     func add(named name: String = "Neue Reise") -> Trip {
         let trip = Trip(name: name, accentHex: nextAccent())
         trips.append(trip)
+        save()
         return trip
     }
 
@@ -210,11 +299,13 @@ final class TripsStore {
             trip.accentHex = nextAccent()
         }
         trips.append(trip)
+        save()
         return trip
     }
 
     func remove(_ trip: Trip) {
         trips.removeAll { $0.id == trip.id }
+        save()
     }
 
     private func nextAccent() -> UInt32 {
@@ -284,6 +375,7 @@ final class TripsStore {
 
 struct ContentView: View {
     @State private var store = TripsStore()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         NavigationStack {
@@ -293,6 +385,9 @@ struct ContentView: View {
                 }
         }
         .tint(AppTheme.accent)
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase != .active { store.save() }
+        }
     }
 }
 
@@ -303,6 +398,9 @@ struct TripsListView: View {
 
     @State private var pushNewTrip: Trip? = nil
     @State private var showWizard = false
+    @State private var showResetConfirm = false
+    @State private var showDeleteAllConfirm = false
+    @State private var deletionTarget: Trip? = nil
 
     private let columns = [GridItem(.adaptive(minimum: 160, maximum: 220), spacing: 14)]
 
@@ -325,11 +423,64 @@ struct TripsListView: View {
         .toolbarBackground(AppTheme.bg, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarColorScheme(.dark, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button {
+                        showResetConfirm = true
+                    } label: {
+                        Label("Demo wiederherstellen", systemImage: "arrow.counterclockwise")
+                    }
+                    Button(role: .destructive) {
+                        showDeleteAllConfirm = true
+                    } label: {
+                        Label("Alle Reisen löschen", systemImage: "trash")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .foregroundStyle(AppTheme.text)
+                }
+            }
+        }
         .navigationDestination(item: $pushNewTrip) { trip in
             TripDetailView(trip: trip, store: store)
         }
         .fullScreenCover(isPresented: $showWizard) {
             TripWizardView(store: store, pushTrip: $pushNewTrip)
+        }
+        .confirmationDialog(
+            "Demo-Reisen wiederherstellen?",
+            isPresented: $showResetConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Wiederherstellen", role: .destructive) { store.resetToDemo() }
+            Button("Abbrechen", role: .cancel) {}
+        } message: {
+            Text("Alle aktuellen Reisen werden ersetzt durch die 4 Demo-Reisen.")
+        }
+        .confirmationDialog(
+            "Alle Reisen löschen?",
+            isPresented: $showDeleteAllConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Alle löschen", role: .destructive) { store.removeAll() }
+            Button("Abbrechen", role: .cancel) {}
+        } message: {
+            Text("Diese Aktion lässt sich nicht rückgängig machen.")
+        }
+        .confirmationDialog(
+            deletionTarget.map { "„\($0.name)" + "\u{201C}" + " wirklich löschen?" } ?? "Reise löschen?",
+            isPresented: Binding(
+                get: { deletionTarget != nil },
+                set: { if !$0 { deletionTarget = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Löschen", role: .destructive) {
+                if let t = deletionTarget { store.remove(t) }
+                deletionTarget = nil
+            }
+            Button("Abbrechen", role: .cancel) { deletionTarget = nil }
         }
     }
 
@@ -383,6 +534,13 @@ struct TripsListView: View {
                     TripCard(trip: trip)
                 }
                 .buttonStyle(.plain)
+                .contextMenu {
+                    Button(role: .destructive) {
+                        deletionTarget = trip
+                    } label: {
+                        Label("Reise löschen", systemImage: "trash")
+                    }
+                }
             }
             newTripCard
         }
