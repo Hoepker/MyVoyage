@@ -1484,7 +1484,10 @@ final class DestinationImageService {
         inflight[key] = task
         let result = await task.value
         inflight[key] = nil
-        cache[key] = result
+        // Only cache successful lookups so transient network failures
+        // (e.g. on cold start before Wi-Fi is up) don't permanently
+        // poison the destination.
+        if result != nil { cache[key] = result }
         return result
     }
 
@@ -1759,10 +1762,7 @@ struct TripWizardView: View {
                 }
                 .id(currentStep)
                 .transition(
-                    .asymmetric(
-                        insertion: .move(edge: goingForward ? .trailing : .leading).combined(with: .opacity),
-                        removal: .move(edge: goingForward ? .leading : .trailing).combined(with: .opacity)
-                    )
+                    .opacity.combined(with: .scale(scale: 0.96))
                 )
             }
             .padding(.horizontal, 20)
