@@ -1408,7 +1408,7 @@ enum BookingPortals {
 
 // MARK: - Destination Image Service
 
-struct DestinationImage: Equatable {
+struct DestinationImage: Equatable, Codable {
     let url: URL
     let attribution: String  // "Wikipedia / <author>"
 }
@@ -1418,8 +1418,25 @@ struct DestinationImage: Equatable {
 final class DestinationImageService {
     static let shared = DestinationImageService()
 
-    private var cache: [String: DestinationImage?] = [:]
+    private static let persistedCacheURL: URL = {
+        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        return dir.appendingPathComponent("destination_images.json")
+    }()
+
+    private var cache: [String: DestinationImage] = [:]
     private var inflight: [String: Task<DestinationImage?, Never>] = [:]
+
+    private init() {
+        if let data = try? Data(contentsOf: Self.persistedCacheURL),
+           let decoded = try? JSONDecoder().decode([String: DestinationImage].self, from: data) {
+            cache = decoded
+        }
+    }
+
+    private func savePersistedCache() {
+        guard let data = try? JSONEncoder().encode(cache) else { return }
+        try? data.write(to: Self.persistedCacheURL, options: .atomic)
+    }
 
     /// City (lowercased) → Wikipedia article title (English wiki has the
     /// best image coverage for landmarks). Add more here over time.
@@ -1487,7 +1504,10 @@ final class DestinationImageService {
         // Only cache successful lookups so transient network failures
         // (e.g. on cold start before Wi-Fi is up) don't permanently
         // poison the destination.
-        if result != nil { cache[key] = result }
+        if let result {
+            cache[key] = result
+            savePersistedCache()
+        }
         return result
     }
 
