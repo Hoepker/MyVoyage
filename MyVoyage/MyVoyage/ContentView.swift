@@ -60,12 +60,101 @@ enum TransportType: String, CaseIterable, Identifiable, Codable {
 }
 
 struct TripSegment: Identifiable, Equatable, Codable {
+    var id: UUID
+    var type: TransportType
+    var from: String
+    var to: String
+    var date: Date?
+    var note: String
+    var hotelCandidates: [HotelCandidate]
+
+    init(
+        id: UUID = UUID(),
+        type: TransportType = .flight,
+        from: String = "",
+        to: String = "",
+        date: Date? = nil,
+        note: String = "",
+        hotelCandidates: [HotelCandidate] = []
+    ) {
+        self.id = id
+        self.type = type
+        self.from = from
+        self.to = to
+        self.date = date
+        self.note = note
+        self.hotelCandidates = hotelCandidates
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, type, from, to, date, note, hotelCandidates
+    }
+
+    // Manueller Codable-Init, damit bestehende Reise-JSONs ohne
+    // `hotelCandidates` weiter geladen werden können.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        type = try c.decodeIfPresent(TransportType.self, forKey: .type) ?? .flight
+        from = try c.decodeIfPresent(String.self, forKey: .from) ?? ""
+        to = try c.decodeIfPresent(String.self, forKey: .to) ?? ""
+        date = try c.decodeIfPresent(Date.self, forKey: .date)
+        note = try c.decodeIfPresent(String.self, forKey: .note) ?? ""
+        hotelCandidates = try c.decodeIfPresent([HotelCandidate].self, forKey: .hotelCandidates) ?? []
+    }
+}
+
+// MARK: - Hotel Candidates
+
+enum HotelStatus: String, CaseIterable, Codable {
+    case considered    // ⏳ Vorgemerkt
+    case selected      // ⭐ Ausgewählt
+    case booked        // ✅ Gebucht
+    case confirmed     // ✓ Bestätigt
+
+    var label: String {
+        switch self {
+        case .considered: "Vorgemerkt"
+        case .selected:   "Ausgewählt"
+        case .booked:     "Gebucht"
+        case .confirmed:  "Bestätigt"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .considered: "hourglass"
+        case .selected:   "star.fill"
+        case .booked:     "checkmark.circle.fill"
+        case .confirmed:  "checkmark.seal.fill"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .considered: Color(hex: 0xF59E0B)
+        case .selected:   Color(hex: 0x3B82F6)
+        case .booked:     Color(hex: 0xF97316)
+        case .confirmed:  Color(hex: 0x10B981)
+        }
+    }
+}
+
+struct HotelCandidate: Identifiable, Equatable, Codable {
     var id: UUID = UUID()
-    var type: TransportType = .flight
-    var from: String = ""
-    var to: String = ""
-    var date: Date? = nil
-    var note: String = ""
+    var name: String
+    var urlString: String?
+    var imageURLString: String?
+    var subtitle: String = ""           // og:description / kurzer Beschreibungstext
+    var pricePerNight: Double?
+    var stars: Int?
+    var notes: String = ""
+    var status: HotelStatus = .considered
+    var bookingReference: String?
+    var createdAt: Date = Date()
+
+    var url: URL? { urlString.flatMap(URL.init(string:)) }
+    var imageURL: URL? { imageURLString.flatMap(URL.init(string:)) }
 }
 
 struct Travelers: Equatable, Codable {
@@ -1084,6 +1173,11 @@ struct SegmentCard: View {
                     .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 7))
                     .overlay(RoundedRectangle(cornerRadius: 7).stroke(AppTheme.border, lineWidth: 1))
             }
+
+            if segment.type == .hotel {
+                Divider().background(AppTheme.border).padding(.vertical, 2)
+                HotelCandidatesSection(segment: segment, onChange: onChange)
+            }
         }
         .padding(14)
         .background(AppTheme.surface, in: RoundedRectangle(cornerRadius: 12))
@@ -1721,6 +1815,91 @@ struct DestinationImageView<Fallback: View>: View {
                 guard !destination.isEmpty else { image = nil; return }
                 image = await DestinationImageService.shared.image(for: destination)
             }
+    }
+}
+
+// MARK: - Hotel Metadata Service
+
+/// Holt Open-Graph-Tags aus einer Hotel-URL (Booking.com, Hotels.com, Airbnb …)
+/// und liefert Titel / Bild-URL / Beschreibung. Funktioniert weil alle großen
+/// Portale OG-Tags für Link-Previews ausspielen. Preis ist über OG nicht
+/// abrufbar — den gibt der User manuell ein.
+struct HotelMetadata: Equatable {
+    let title: String?
+    let imageURL: URL?
+    let subtitle: String?
+}
+
+enum HotelMetadataService {
+    static func fetch(url: URL) async -> HotelMetadata? {
+        var request = URLRequest(url: url)
+        // Safari-iOS-User-Agent reduziert die Wahrscheinlichkeit, dass
+        // Portale uns als Bot blocken. Booking.com setzt AWS WAF und
+        // blockt trotzdem; Hotels.com und Expedia rendern OG-Tags erst
+        // per JS — in diesen Fällen kommt nichts zurück und der User
+        // füllt die Felder im Sheet manuell aus.
+        request.setValue(
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+            forHTTPHeaderField: "User-Agent"
+        )
+        request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
+        request.setValue("de-DE,de;q=0.9,en;q=0.8", forHTTPHeaderField: "Accept-Language")
+        request.timeoutInterval = 12
+
+        do {
+            let (data, _) = try await URLSession.shared.data(for: request)
+            guard let html = String(data: data, encoding: .utf8) else { return nil }
+            let title = extractOG(property: "title", in: html) ?? extractTitle(in: html)
+            let imageStr = extractOG(property: "image", in: html)
+            let imageURL = imageStr.flatMap { URL(string: $0) }
+            let description = extractOG(property: "description", in: html)
+            return HotelMetadata(title: title, imageURL: imageURL, subtitle: description)
+        } catch {
+            return nil
+        }
+    }
+
+    private static func extractOG(property: String, in html: String) -> String? {
+        let patterns = [
+            #"<meta[^>]+property=["']og:\#(property)["'][^>]+content=["']([^"']+)["']"#,
+            #"<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:\#(property)["']"#,
+        ]
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { continue }
+            let range = NSRange(html.startIndex..., in: html)
+            if let match = regex.firstMatch(in: html, range: range),
+               match.numberOfRanges > 1,
+               let captureRange = Range(match.range(at: 1), in: html) {
+                return String(html[captureRange]).htmlDecoded
+            }
+        }
+        return nil
+    }
+
+    private static func extractTitle(in html: String) -> String? {
+        let pattern = #"<title[^>]*>([^<]+)</title>"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return nil }
+        let range = NSRange(html.startIndex..., in: html)
+        if let match = regex.firstMatch(in: html, range: range),
+           match.numberOfRanges > 1,
+           let captureRange = Range(match.range(at: 1), in: html) {
+            return String(html[captureRange]).htmlDecoded
+        }
+        return nil
+    }
+}
+
+private extension String {
+    var htmlDecoded: String {
+        self
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#039;", with: "'")
+            .replacingOccurrences(of: "&apos;", with: "'")
+            .replacingOccurrences(of: "&nbsp;", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
@@ -2570,6 +2749,366 @@ enum TripBuilder {
         let name = monthLabel.isEmpty ? primary : "\(primary) · \(monthLabel)"
 
         return Trip(name: name, travelers: data.travelers, segments: segments)
+    }
+}
+
+// MARK: - Hotel Candidates UI
+
+/// Liste der gemerkten Hotel-Vorschläge unter einer Hotel-Etappe.
+/// Klick auf eine Zeile öffnet das Edit-Sheet, "+ Hotel hinzufügen" öffnet
+/// das Add-Sheet mit URL-Paste-Flow.
+struct HotelCandidatesSection: View {
+    let segment: TripSegment
+    let onChange: (TripSegment) -> Void
+
+    @State private var showAddSheet = false
+    @State private var editingCandidate: HotelCandidate? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "bed.double.fill")
+                    .font(.system(size: 11))
+                Text("HOTEL-VORSCHLÄGE\(segment.hotelCandidates.isEmpty ? "" : " (\(segment.hotelCandidates.count))")")
+                    .font(.system(size: 9, weight: .medium))
+                    .tracking(1.2)
+                Spacer()
+            }
+            .foregroundStyle(AppTheme.textSubtle)
+
+            ForEach(segment.hotelCandidates) { candidate in
+                Button {
+                    editingCandidate = candidate
+                } label: {
+                    HotelCandidateRow(candidate: candidate)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Button {
+                showAddSheet = true
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "plus")
+                    Text(segment.hotelCandidates.isEmpty ? "Hotel hinzufügen" : "Weiteres Hotel hinzufügen")
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(AppTheme.accent)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(AppTheme.accent.opacity(0.1), in: Capsule())
+                .overlay(Capsule().stroke(AppTheme.accent.opacity(0.3), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+        }
+        .sheet(isPresented: $showAddSheet) {
+            HotelEditorSheet(initial: nil) { newCandidate in
+                var s = segment
+                s.hotelCandidates.append(newCandidate)
+                onChange(s)
+            }
+        }
+        .sheet(item: $editingCandidate) { candidate in
+            HotelEditorSheet(initial: candidate) { updated in
+                var s = segment
+                if let idx = s.hotelCandidates.firstIndex(where: { $0.id == updated.id }) {
+                    s.hotelCandidates[idx] = updated
+                }
+                onChange(s)
+            } onDelete: {
+                var s = segment
+                s.hotelCandidates.removeAll { $0.id == candidate.id }
+                onChange(s)
+            }
+        }
+    }
+}
+
+struct HotelCandidateRow: View {
+    let candidate: HotelCandidate
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            // Thumbnail
+            Group {
+                if let url = candidate.imageURL {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let img):
+                            img.resizable().aspectRatio(contentMode: .fill)
+                        default:
+                            placeholderThumbnail
+                        }
+                    }
+                } else {
+                    placeholderThumbnail
+                }
+            }
+            .frame(width: 60, height: 60)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(candidate.name)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(AppTheme.text)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+
+                HStack(spacing: 6) {
+                    if let stars = candidate.stars, stars > 0 {
+                        Text(String(repeating: "★", count: stars))
+                            .font(.system(size: 10))
+                            .foregroundStyle(.yellow)
+                    }
+                    if let price = candidate.pricePerNight {
+                        Text("\(Int(price)) €/Nacht")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(AppTheme.text)
+                    }
+                }
+
+                HStack(spacing: 4) {
+                    Image(systemName: candidate.status.icon).font(.system(size: 9))
+                    Text(candidate.status.label).font(.system(size: 10, weight: .medium))
+                    if candidate.status == .confirmed || candidate.status == .booked,
+                       let ref = candidate.bookingReference, !ref.isEmpty {
+                        Text("·").foregroundStyle(AppTheme.textSubtle)
+                        Text(ref).font(.system(size: 10))
+                            .foregroundStyle(AppTheme.textMuted)
+                    }
+                }
+                .foregroundStyle(candidate.status.color)
+                .padding(.top, 1)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(8)
+        .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(AppTheme.border, lineWidth: 1))
+    }
+
+    private var placeholderThumbnail: some View {
+        RoundedRectangle(cornerRadius: 8)
+            .fill(AppTheme.accent.opacity(0.15))
+            .overlay(
+                Image(systemName: "bed.double.fill")
+                    .font(.system(size: 18))
+                    .foregroundStyle(AppTheme.accent.opacity(0.6))
+            )
+    }
+}
+
+// MARK: - Hotel Editor Sheet
+
+struct HotelEditorSheet: View {
+    let initial: HotelCandidate?
+    let onSave: (HotelCandidate) -> Void
+    var onDelete: (() -> Void)? = nil
+
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var name: String = ""
+    @State private var urlString: String = ""
+    @State private var imageURLString: String = ""
+    @State private var subtitle: String = ""
+    @State private var pricePerNight: String = ""
+    @State private var stars: Int = 0
+    @State private var notes: String = ""
+    @State private var status: HotelStatus = .considered
+    @State private var bookingReference: String = ""
+
+    @State private var isFetching = false
+    @State private var fetchError: String?
+    @State private var showPasteHint = false
+
+    private var isEditing: Bool { initial != nil }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    HStack {
+                        TextField("Link aus Booking, Hotels.com, …", text: $urlString)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .keyboardType(.URL)
+                            .onSubmit { Task { await fetchMetadata() } }
+
+                        if isFetching {
+                            ProgressView().scaleEffect(0.8)
+                        } else if !urlString.isEmpty {
+                            Button {
+                                Task { await fetchMetadata() }
+                            } label: {
+                                Image(systemName: "arrow.down.circle.fill")
+                                    .foregroundStyle(AppTheme.accent)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    if showPasteHint {
+                        Button {
+                            if let pasted = UIPasteboard.general.string {
+                                urlString = pasted
+                                showPasteHint = false
+                                Task { await fetchMetadata() }
+                            }
+                        } label: {
+                            Label("Link aus Zwischenablage einfügen", systemImage: "doc.on.clipboard")
+                                .font(.caption)
+                        }
+                    }
+                    if let err = fetchError {
+                        Text(err).font(.caption).foregroundStyle(.red)
+                    }
+                } header: {
+                    Text("Hotel-Seite")
+                } footer: {
+                    Text("Auto-Import klappt bei manchen Portalen nicht (Booking.com & Hotels.com blockieren). In dem Fall einfach Name + Foto-URL unten manuell eintragen — der Link bleibt trotzdem gespeichert, damit du später schnell zur Buchungsseite kommst.")
+                }
+
+                Section("Hotel-Details") {
+                    if let url = URL(string: imageURLString), !imageURLString.isEmpty {
+                        AsyncImage(url: url) { phase in
+                            switch phase {
+                            case .success(let img):
+                                img.resizable().aspectRatio(contentMode: .fill)
+                            default:
+                                Color.gray.opacity(0.2)
+                            }
+                        }
+                        .frame(height: 140)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                    }
+                    TextField("Hotel-Name", text: $name)
+                    TextField("Foto-URL (optional)", text: $imageURLString)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.URL)
+                        .font(.caption)
+                    HStack {
+                        Text("Preis / Nacht")
+                        Spacer()
+                        TextField("z.B. 189", text: $pricePerNight)
+                            .keyboardType(.numberPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 100)
+                        Text("€").foregroundStyle(.secondary)
+                    }
+                    Stepper(value: $stars, in: 0...5) {
+                        HStack {
+                            Text("Sterne")
+                            Spacer()
+                            Text(stars == 0 ? "—" : String(repeating: "★", count: stars))
+                                .foregroundStyle(.yellow)
+                        }
+                    }
+                    TextField("Notizen", text: $notes, axis: .vertical).lineLimit(2...4)
+                }
+
+                Section("Status") {
+                    Picker("Status", selection: $status) {
+                        ForEach(HotelStatus.allCases, id: \.self) { s in
+                            Label(s.label, systemImage: s.icon).tag(s)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    if status == .booked || status == .confirmed {
+                        TextField("Buchungs-Referenz", text: $bookingReference)
+                            .textInputAutocapitalization(.characters)
+                    }
+                }
+
+                if isEditing, let onDelete {
+                    Section {
+                        Button(role: .destructive) {
+                            onDelete()
+                            dismiss()
+                        } label: {
+                            Label("Hotel-Vorschlag löschen", systemImage: "trash")
+                        }
+                    }
+                }
+            }
+            .navigationTitle(isEditing ? "Hotel bearbeiten" : "Hotel hinzufügen")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Abbrechen") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Sichern") { save() }
+                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+            .onAppear {
+                if let i = initial {
+                    name = i.name
+                    urlString = i.urlString ?? ""
+                    imageURLString = i.imageURLString ?? ""
+                    subtitle = i.subtitle
+                    pricePerNight = i.pricePerNight.map { String(Int($0)) } ?? ""
+                    stars = i.stars ?? 0
+                    notes = i.notes
+                    status = i.status
+                    bookingReference = i.bookingReference ?? ""
+                } else {
+                    // Beim Hinzufügen: checke Zwischenablage auf URL
+                    checkPasteboard()
+                }
+            }
+        }
+    }
+
+    private func checkPasteboard() {
+        if UIPasteboard.general.hasURLs {
+            showPasteHint = true
+        } else if let text = UIPasteboard.general.string,
+                  text.lowercased().hasPrefix("http") {
+            showPasteHint = true
+        }
+    }
+
+    private func fetchMetadata() async {
+        let trimmed = urlString.trimmingCharacters(in: .whitespaces)
+        guard let url = URL(string: trimmed),
+              url.scheme?.hasPrefix("http") == true else {
+            fetchError = "Bitte gültige URL eingeben (https://…)"
+            return
+        }
+        fetchError = nil
+        isFetching = true
+        defer { isFetching = false }
+
+        if let meta = await HotelMetadataService.fetch(url: url) {
+            if name.isEmpty, let t = meta.title { name = t }
+            if imageURLString.isEmpty, let img = meta.imageURL {
+                imageURLString = img.absoluteString
+            }
+            if subtitle.isEmpty, let s = meta.subtitle { subtitle = s }
+        } else {
+            fetchError = "Hotel-Details konnten nicht geladen werden. Name bitte selbst eintragen."
+        }
+    }
+
+    private func save() {
+        var candidate = initial ?? HotelCandidate(name: "")
+        candidate.name = name.trimmingCharacters(in: .whitespaces)
+        candidate.urlString = urlString.trimmingCharacters(in: .whitespaces).isEmpty ? nil : urlString
+        candidate.imageURLString = imageURLString.isEmpty ? nil : imageURLString
+        candidate.subtitle = subtitle
+        candidate.pricePerNight = Double(pricePerNight.trimmingCharacters(in: .whitespaces))
+        candidate.stars = stars == 0 ? nil : stars
+        candidate.notes = notes
+        candidate.status = status
+        candidate.bookingReference = (status == .booked || status == .confirmed) && !bookingReference.isEmpty
+            ? bookingReference
+            : nil
+        onSave(candidate)
+        dismiss()
     }
 }
 
