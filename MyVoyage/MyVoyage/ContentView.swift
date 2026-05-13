@@ -622,8 +622,7 @@ struct TripsListView: View {
                     .foregroundStyle(AppTheme.textSubtle)
                     .multilineTextAlignment(.center)
             }
-            .frame(maxWidth: .infinity)
-            .frame(height: 200)
+            .frame(maxWidth: .infinity, minHeight: 200, maxHeight: 200)
             .background(Color.clear)
             .overlay(
                 RoundedRectangle(cornerRadius: 16)
@@ -648,15 +647,13 @@ private struct TripCard: View {
                         endPoint: .bottomTrailing
                     )
                 }
-                .frame(height: 110)
-                .clipped()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                 LinearGradient(
                     colors: [Color.clear, Color.black.opacity(0.55)],
                     startPoint: .top,
                     endPoint: .bottom
                 )
-                .frame(height: 110)
                 .allowsHitTesting(false)
 
                 Text(trip.coverEmoji)
@@ -665,7 +662,8 @@ private struct TripCard: View {
                     .padding(.trailing, 10)
                     .shadow(color: .black.opacity(0.5), radius: 8)
             }
-            .frame(height: 110)
+            .frame(maxWidth: .infinity, minHeight: 110, maxHeight: 110)
+            .clipped()
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(trip.name)
@@ -687,9 +685,9 @@ private struct TripCard: View {
                 .foregroundStyle(AppTheme.textSubtle)
             }
             .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .frame(height: 200)
+        .frame(maxWidth: .infinity, minHeight: 200, maxHeight: 200)
         .background(AppTheme.surface)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
