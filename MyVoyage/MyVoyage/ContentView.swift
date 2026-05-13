@@ -952,6 +952,7 @@ struct Timeline: View {
                         SegmentCard(
                             segment: segment,
                             travelers: trip.travelers,
+                            trip: trip,
                             onChange: { trip.update($0) },
                             onRemove: { trip.remove(segment) }
                         )
@@ -993,6 +994,7 @@ private struct TimelineDot: View {
 struct SegmentCard: View {
     let segment: TripSegment
     let travelers: Travelers
+    let trip: Trip
     let onChange: (TripSegment) -> Void
     let onRemove: () -> Void
 
@@ -1020,7 +1022,7 @@ struct SegmentCard: View {
                 Spacer(minLength: 4)
                 Menu {
                     ForEach(portals) { portal in
-                        if let url = portal.urlBuilder(segment, travelers) {
+                        if let url = portal.urlBuilder(segment, travelers, trip) {
                             Link(portal.name, destination: url)
                         }
                     }
@@ -1324,7 +1326,7 @@ struct BookingOverview: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(portals) { portal in
-                        if let url = portal.urlBuilder(segment, trip.travelers) {
+                        if let url = portal.urlBuilder(segment, trip.travelers, trip) {
                             Link(destination: url) {
                                 HStack(spacing: 4) {
                                     Text(portal.name)
@@ -1370,10 +1372,17 @@ struct BookingOverview: View {
 struct BookingPortal: Identifiable {
     let id = UUID()
     let name: String
-    let urlBuilder: (TripSegment, Travelers) -> URL?
+    /// Trip wird mit übergeben, damit Hotel-URLs aus dem nächsten
+    /// Reise-Segment ein korrektes Checkout-Datum ableiten können.
+    let urlBuilder: (TripSegment, Travelers, Trip) -> URL?
 }
 
 enum BookingPortals {
+    /// Booking.com Affiliate-Programm: https://www.booking.com/affiliate-program
+    /// Sobald angemeldet hier die AID eintragen und `affiliateAID` an die
+    /// Hotel-URLs übergeben — bringt ~25–40 % Provision pro Buchung.
+    static var affiliateAID: String? = nil
+
     private static let dateFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"
@@ -1390,71 +1399,133 @@ enum BookingPortals {
         s.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? s
     }
 
+    /// Sucht das nächste Reise-Segment NACH der Hotel-Übernachtung und
+    /// nutzt dessen Datum als Checkout. Beispiel: Hotel Barcelona ab 1.6.,
+    /// nächstes Segment "Mietwagen Barcelona→Valencia" am 4.6. → Checkout = 4.6.
+    /// Fallback: checkin + 1 Tag.
+    private static func checkoutDate(for hotel: TripSegment, in trip: Trip) -> Date? {
+        guard let checkin = hotel.date else { return nil }
+        let nextSegmentDate = trip.segments
+            .compactMap { seg -> Date? in
+                guard seg.id != hotel.id, let d = seg.date, d > checkin else { return nil }
+                return d
+            }
+            .min()
+        return nextSegmentDate ?? Calendar.current.date(byAdding: .day, value: 1, to: checkin)
+    }
+
+    /// Robustes URL-Building mit URLComponents — erlaubt mehrfache Query-Items
+    /// mit gleichem Namen (z.B. `age=8&age=5`) und kümmert sich automatisch
+    /// um URL-Encoding von Sonderzeichen wie "München" oder "São Paulo".
+    private static func buildURL(base: String, items: [URLQueryItem]) -> URL? {
+        var components = URLComponents(string: base)
+        components?.queryItems = items.filter { ($0.value ?? "").isEmpty == false }
+        return components?.url
+    }
+
     static func portals(for type: TransportType) -> [BookingPortal] {
         switch type {
         case .flight:
             return [
-                BookingPortal(name: "Skyscanner") { seg, tr in
+                BookingPortal(name: "Skyscanner") { seg, tr, _ in
                     let d = dateString(seg.date).replacingOccurrences(of: "-", with: "")
                     let urlStr = "https://www.skyscanner.de/transport/flights/\(encode(seg.from))/\(encode(seg.to))/\(d)/?adults=\(tr.adults)&children=\(tr.children.count)"
                     return URL(string: urlStr)
                 },
-                BookingPortal(name: "Google Flights") { seg, tr in
+                BookingPortal(name: "Google Flights") { seg, tr, _ in
                     let q = "Flights from \(seg.from) to \(seg.to) on \(dateString(seg.date))"
                     let urlStr = "https://www.google.com/travel/flights?q=\(encode(q))&adults=\(tr.adults)&children=\(tr.children.count)"
                     return URL(string: urlStr)
                 },
-                BookingPortal(name: "Expedia") { seg, tr in
+                BookingPortal(name: "Expedia") { seg, tr, _ in
                     let urlStr = "https://www.expedia.de/Flights-Search?trip=oneway&leg1=from:\(encode(seg.from)),to:\(encode(seg.to)),departure:\(dateString(seg.date))&passengers=adults:\(tr.adults)"
                     return URL(string: urlStr)
                 },
             ]
         case .train:
             return [
-                BookingPortal(name: "DB Bahn") { seg, _ in
+                BookingPortal(name: "DB Bahn") { seg, _, _ in
                     let urlStr = "https://www.bahn.de/buchung/fahrplan/suche#sts=true&so=\(encode(seg.from))&zo=\(encode(seg.to))"
                     return URL(string: urlStr)
                 },
-                BookingPortal(name: "Omio") { seg, tr in
+                BookingPortal(name: "Omio") { seg, tr, _ in
                     let urlStr = "https://www.omio.de/trains/\(encode(seg.from))-\(encode(seg.to))?date=\(dateString(seg.date))&adults=\(tr.adults)&children=\(tr.children.count)"
                     return URL(string: urlStr)
                 },
             ]
         case .car:
             return [
-                BookingPortal(name: "Rentalcars") { seg, _ in
+                BookingPortal(name: "Rentalcars") { seg, _, _ in
                     let urlStr = "https://www.rentalcars.com/de/search/?pickUpPlace=\(encode(seg.from))&puDay=\(dateString(seg.date))"
                     return URL(string: urlStr)
                 },
-                BookingPortal(name: "Booking.com") { seg, _ in
+                BookingPortal(name: "Booking.com") { seg, _, _ in
                     let urlStr = "https://www.booking.com/cars/search.de.html?pickup_location=\(encode(seg.from))&pickup_date=\(dateString(seg.date))"
                     return URL(string: urlStr)
                 },
             ]
         case .bus:
             return [
-                BookingPortal(name: "FlixBus") { seg, tr in
+                BookingPortal(name: "FlixBus") { seg, tr, _ in
                     let urlStr = "https://global.flixbus.com/bus-tickets/\(encode(seg.from))-\(encode(seg.to))?departureDate=\(dateString(seg.date))&adult=\(tr.adults)&children=\(tr.children.count)"
                     return URL(string: urlStr)
                 },
-                BookingPortal(name: "Omio") { seg, tr in
+                BookingPortal(name: "Omio") { seg, tr, _ in
                     let urlStr = "https://www.omio.de/buses/\(encode(seg.from))-\(encode(seg.to))?date=\(dateString(seg.date))&adults=\(tr.adults)&children=\(tr.children.count)"
                     return URL(string: urlStr)
                 },
             ]
         case .hotel:
             return [
-                BookingPortal(name: "Booking.com") { seg, tr in
-                    let urlStr = "https://www.booking.com/searchresults.de.html?ss=\(encode(seg.to))&checkin=\(dateString(seg.date))&group_adults=\(tr.adults)&group_children=\(tr.children.count)"
-                    return URL(string: urlStr)
+                BookingPortal(name: "Booking.com") { seg, tr, trip in
+                    var items: [URLQueryItem] = [
+                        URLQueryItem(name: "ss", value: seg.to),
+                        URLQueryItem(name: "checkin", value: dateString(seg.date)),
+                        URLQueryItem(name: "checkout", value: dateString(checkoutDate(for: seg, in: trip))),
+                        URLQueryItem(name: "group_adults", value: "\(tr.adults)"),
+                        URLQueryItem(name: "group_children", value: "\(tr.children.count)"),
+                        URLQueryItem(name: "no_rooms", value: "1"),
+                        URLQueryItem(name: "lang", value: "de"),
+                        URLQueryItem(name: "selected_currency", value: "EUR"),
+                    ]
+                    // Booking erwartet pro Kind ein eigenes `age=<n>`
+                    for age in tr.children {
+                        items.append(URLQueryItem(name: "age", value: "\(age)"))
+                    }
+                    if let aid = affiliateAID {
+                        items.append(URLQueryItem(name: "aid", value: aid))
+                        items.append(URLQueryItem(name: "label", value: "myvoyage-ios"))
+                    }
+                    return buildURL(base: "https://www.booking.com/searchresults.de.html", items: items)
                 },
-                BookingPortal(name: "Hotels.com") { seg, tr in
-                    let urlStr = "https://de.hotels.com/search.do?q-destination=\(encode(seg.to))&q-check-in=\(dateString(seg.date))&q-rooms=1&q-room-0-adults=\(tr.adults)&q-room-0-children=\(tr.children.count)"
-                    return URL(string: urlStr)
+                BookingPortal(name: "Hotels.com") { seg, tr, trip in
+                    var items: [URLQueryItem] = [
+                        URLQueryItem(name: "q-destination", value: seg.to),
+                        URLQueryItem(name: "q-check-in", value: dateString(seg.date)),
+                        URLQueryItem(name: "q-check-out", value: dateString(checkoutDate(for: seg, in: trip))),
+                        URLQueryItem(name: "q-rooms", value: "1"),
+                        URLQueryItem(name: "q-room-0-adults", value: "\(tr.adults)"),
+                        URLQueryItem(name: "q-room-0-children", value: "\(tr.children.count)"),
+                        URLQueryItem(name: "locale", value: "de_DE"),
+                    ]
+                    for (idx, age) in tr.children.enumerated() {
+                        items.append(URLQueryItem(name: "q-room-0-child-\(idx)-age", value: "\(age)"))
+                    }
+                    return buildURL(base: "https://de.hotels.com/search.do", items: items)
                 },
-                BookingPortal(name: "Expedia") { seg, tr in
-                    let urlStr = "https://www.expedia.de/Hotel-Search?destination=\(encode(seg.to))&startDate=\(dateString(seg.date))&adults=\(tr.adults)&children=\(tr.children.count)"
-                    return URL(string: urlStr)
+                BookingPortal(name: "Expedia") { seg, tr, trip in
+                    var items: [URLQueryItem] = [
+                        URLQueryItem(name: "destination", value: seg.to),
+                        URLQueryItem(name: "startDate", value: dateString(seg.date)),
+                        URLQueryItem(name: "endDate", value: dateString(checkoutDate(for: seg, in: trip))),
+                        URLQueryItem(name: "adults", value: "\(tr.adults)"),
+                        URLQueryItem(name: "children", value: "\(tr.children.count)"),
+                        URLQueryItem(name: "rooms", value: "1"),
+                    ]
+                    for age in tr.children {
+                        items.append(URLQueryItem(name: "childAge", value: "\(age)"))
+                    }
+                    return buildURL(base: "https://www.expedia.de/Hotel-Search", items: items)
                 },
             ]
         }
