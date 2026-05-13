@@ -170,23 +170,80 @@ final class Trip: Identifiable, Hashable, Codable {
         ("florenz", "🎨"),
         ("venedig", "🛶"),
         ("venice", "🛶"),
+        ("verona", "🏟️"),
+        ("mailand", "👗"),
+        ("milan", "👗"),
+        ("neapel", "🍕"),
+        ("naples", "🍕"),
         ("new york", "🗽"),
         ("tokio", "⛩️"),
         ("tokyo", "⛩️"),
         ("kyoto", "🏯"),
+        ("osaka", "🏯"),
         ("istanbul", "🕌"),
         ("barcelona", "🏝️"),
         ("madrid", "💃"),
         ("valencia", "🍊"),
+        ("sevilla", "💃"),
+        ("seville", "💃"),
+        ("lissabon", "🌊"),
+        ("lisbon", "🌊"),
+        ("porto", "🍷"),
         ("münchen", "🍺"),
         ("munich", "🍺"),
         ("berlin", "🐻"),
+        ("hamburg", "⚓"),
+        ("frankfurt", "🏙️"),
+        ("köln", "⛪"),
+        ("cologne", "⛪"),
+        ("stuttgart", "🚗"),
+        ("düsseldorf", "🎨"),
+        ("dresden", "🎭"),
+        ("wien", "🎶"),
+        ("vienna", "🎶"),
+        ("prag", "🌉"),
+        ("prague", "🌉"),
+        ("athen", "🏛️"),
+        ("athens", "🏛️"),
         ("amsterdam", "🌷"),
+        ("brüssel", "🍫"),
+        ("brussels", "🍫"),
+        ("kopenhagen", "🧜‍♀️"),
+        ("copenhagen", "🧜‍♀️"),
+        ("stockholm", "🛥️"),
+        ("oslo", "🏔️"),
+        ("helsinki", "🧖"),
+        ("dublin", "🍀"),
+        ("edinburgh", "🏰"),
+        ("zürich", "🏔️"),
+        ("zurich", "🏔️"),
         ("rio", "🏖️"),
+        ("rio de janeiro", "🏖️"),
         ("vegas", "🎰"),
+        ("las vegas", "🎰"),
         ("san francisco", "🌉"),
+        ("los angeles", "🌴"),
+        ("miami", "🌴"),
+        ("chicago", "🌭"),
         ("dubai", "🏙️"),
         ("bangkok", "🛕"),
+        ("singapur", "🦁"),
+        ("singapore", "🦁"),
+        ("hongkong", "🏙️"),
+        ("hong kong", "🏙️"),
+        ("sydney", "🦘"),
+        ("melbourne", "☕"),
+        ("kapstadt", "🦓"),
+        ("cape town", "🦓"),
+        ("marrakech", "🐪"),
+        ("marrakesch", "🐪"),
+        ("kairo", "🐫"),
+        ("cairo", "🐫"),
+        ("jerusalem", "🕍"),
+        ("mallorca", "🏝️"),
+        ("ibiza", "🏝️"),
+        ("kreta", "🏝️"),
+        ("santorini", "⛪"),
     ]
 
     var uniquePlaceCount: Int {
@@ -1449,6 +1506,11 @@ final class DestinationImageService {
         "florenz": "Florence Cathedral",
         "venedig": "St Mark's Square",
         "venice": "St Mark's Square",
+        "verona": "Verona Arena",
+        "mailand": "Milan Cathedral",
+        "milan": "Milan Cathedral",
+        "neapel": "Mount Vesuvius",
+        "naples": "Mount Vesuvius",
         "tokio": "Tokyo Tower",
         "tokyo": "Tokyo Tower",
         "kyoto": "Kinkaku-ji",
@@ -2384,7 +2446,7 @@ private struct FlowLayout: Layout {
 
 enum TripBuilder {
     static func build(from data: WizardData) -> Trip {
-        let dests = data.validDestinations
+        let dests = data.validDestinations.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         let cal = Calendar.current
         let totalDays: Int = {
             guard let s = data.startDate, let e = data.endDate else { return 7 }
@@ -2419,12 +2481,12 @@ enum TripBuilder {
             segments.append(TripSegment(type: mode, from: last, to: "", date: returnDate))
         }
 
-        let primary = dests.first ?? "Neue Reise"
+        let primary = (dests.first ?? "Neue Reise").trimmingCharacters(in: .whitespacesAndNewlines)
         let f = DateFormatter()
         f.locale = Locale(identifier: "de_DE")
         f.dateFormat = "MMMM yyyy"
         let monthLabel = data.startDate.map { f.string(from: $0) } ?? ""
-        let name = monthLabel.isEmpty ? primary : "\(primary) \(monthLabel)"
+        let name = monthLabel.isEmpty ? primary : "\(primary) · \(monthLabel)"
 
         return Trip(name: name, travelers: data.travelers, segments: segments)
     }
