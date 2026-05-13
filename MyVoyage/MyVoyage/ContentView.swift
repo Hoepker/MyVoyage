@@ -1616,28 +1616,40 @@ struct DestinationImageView<Fallback: View>: View {
     }
 
     var body: some View {
-        Group {
-            if let image {
-                AsyncImage(url: image.url, transaction: Transaction(animation: .easeInOut(duration: 0.35))) { phase in
-                    switch phase {
-                    case .success(let img):
-                        img.resizable().aspectRatio(contentMode: contentMode)
-                    case .failure:
-                        fallback()
-                    case .empty:
-                        fallback()
-                    @unknown default:
+        // Color.clear acts as the size anchor; whatever frame the parent
+        // proposes is what this view occupies. The AsyncImage in the
+        // overlay is forced inside those bounds — without this anchor
+        // an .aspectRatio(.fill) image would otherwise dictate the size
+        // upward and inflate the surrounding tile when it finally loads.
+        Color.clear
+            .overlay {
+                Group {
+                    if let image {
+                        AsyncImage(
+                            url: image.url,
+                            transaction: Transaction(animation: .easeInOut(duration: 0.35))
+                        ) { phase in
+                            switch phase {
+                            case .success(let img):
+                                img.resizable().aspectRatio(contentMode: contentMode)
+                            case .failure:
+                                fallback()
+                            case .empty:
+                                fallback()
+                            @unknown default:
+                                fallback()
+                            }
+                        }
+                    } else {
                         fallback()
                     }
                 }
-            } else {
-                fallback()
             }
-        }
-        .task(id: destination) {
-            guard !destination.isEmpty else { image = nil; return }
-            image = await DestinationImageService.shared.image(for: destination)
-        }
+            .clipped()
+            .task(id: destination) {
+                guard !destination.isEmpty else { image = nil; return }
+                image = await DestinationImageService.shared.image(for: destination)
+            }
     }
 }
 
