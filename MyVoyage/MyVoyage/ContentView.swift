@@ -2920,7 +2920,6 @@ struct HotelEditorSheet: View {
 
     @State private var isFetching = false
     @State private var fetchError: String?
-    @State private var showPasteHint = false
 
     private var isEditing: Bool { initial != nil }
 
@@ -2928,8 +2927,22 @@ struct HotelEditorSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    HStack {
-                        TextField("Link aus Booking, Hotels.com, …", text: $urlString)
+                    HStack(spacing: 8) {
+                        // Apple's offizieller PasteButton — kein iOS-Privacy-
+                        // Dialog, ein Tap fügt den Inhalt der Zwischenablage
+                        // direkt ein. Funktioniert auch wenn das TextField
+                        // long-press-paste nicht erkannt wird.
+                        PasteButton(payloadType: String.self) { strings in
+                            guard let pasted = strings.first else { return }
+                            DispatchQueue.main.async {
+                                urlString = pasted.trimmingCharacters(in: .whitespacesAndNewlines)
+                                Task { await fetchMetadata() }
+                            }
+                        }
+                        .labelStyle(.iconOnly)
+                        .buttonBorderShape(.capsule)
+
+                        TextField("Link einfügen (z.B. booking.com/hotel/…)", text: $urlString)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .keyboardType(.URL)
@@ -2947,25 +2960,13 @@ struct HotelEditorSheet: View {
                             .buttonStyle(.plain)
                         }
                     }
-                    if showPasteHint {
-                        Button {
-                            if let pasted = UIPasteboard.general.string {
-                                urlString = pasted
-                                showPasteHint = false
-                                Task { await fetchMetadata() }
-                            }
-                        } label: {
-                            Label("Link aus Zwischenablage einfügen", systemImage: "doc.on.clipboard")
-                                .font(.caption)
-                        }
-                    }
                     if let err = fetchError {
                         Text(err).font(.caption).foregroundStyle(.red)
                     }
                 } header: {
                     Text("Hotel-Seite")
                 } footer: {
-                    Text("Auto-Import klappt bei manchen Portalen nicht (Booking.com & Hotels.com blockieren). In dem Fall einfach Name + Foto-URL unten manuell eintragen — der Link bleibt trotzdem gespeichert, damit du später schnell zur Buchungsseite kommst.")
+                    Text("Mit dem 📋-Button links den Link einfügen — oder die URL ins Feld kopieren. Auto-Import liefert Name + Foto, wenn das Portal es zulässt (Booking.com & Hotels.com blockieren oft); ansonsten weiter unten manuell eintragen.")
                 }
 
                 Section("Hotel-Details") {
@@ -3055,20 +3056,8 @@ struct HotelEditorSheet: View {
                     notes = i.notes
                     status = i.status
                     bookingReference = i.bookingReference ?? ""
-                } else {
-                    // Beim Hinzufügen: checke Zwischenablage auf URL
-                    checkPasteboard()
                 }
             }
-        }
-    }
-
-    private func checkPasteboard() {
-        if UIPasteboard.general.hasURLs {
-            showPasteHint = true
-        } else if let text = UIPasteboard.general.string,
-                  text.lowercased().hasPrefix("http") {
-            showPasteHint = true
         }
     }
 
