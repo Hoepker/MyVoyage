@@ -2927,27 +2927,27 @@ struct HotelEditorSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    HStack(spacing: 8) {
-                        // Apple's offizieller PasteButton — kein iOS-Privacy-
-                        // Dialog, ein Tap fügt den Inhalt der Zwischenablage
-                        // direkt ein. Funktioniert auch wenn das TextField
-                        // long-press-paste nicht erkannt wird.
-                        PasteButton(payloadType: String.self) { strings in
-                            guard let pasted = strings.first else { return }
-                            DispatchQueue.main.async {
-                                urlString = pasted.trimmingCharacters(in: .whitespacesAndNewlines)
-                                Task { await fetchMetadata() }
-                            }
-                        }
-                        .labelStyle(.iconOnly)
-                        .buttonBorderShape(.capsule)
+                    // Großer Apple-PasteButton als ganze Zeile — kein
+                    // iOS-Privacy-Dialog, weil der User durch den Tap selbst
+                    // zustimmt. labelStyle(.titleAndIcon) bringt Text + Icon
+                    // statt nur das Symbol.
+                    PasteButton(payloadType: String.self) { strings in
+                        guard let pasted = strings.first else { return }
+                        let trimmed = pasted.trimmingCharacters(in: .whitespacesAndNewlines)
+                        urlString = trimmed
+                        Task { await fetchMetadata() }
+                    }
+                    .labelStyle(.titleAndIcon)
+                    .buttonBorderShape(.capsule)
+                    .tint(AppTheme.accent)
+                    .frame(maxWidth: .infinity)
 
-                        TextField("Link einfügen (z.B. booking.com/hotel/…)", text: $urlString)
+                    HStack {
+                        TextField("…oder Link manuell eintippen", text: $urlString)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .keyboardType(.URL)
                             .onSubmit { Task { await fetchMetadata() } }
-
                         if isFetching {
                             ProgressView().scaleEffect(0.8)
                         } else if !urlString.isEmpty {
@@ -2966,7 +2966,7 @@ struct HotelEditorSheet: View {
                 } header: {
                     Text("Hotel-Seite")
                 } footer: {
-                    Text("Mit dem 📋-Button links den Link einfügen — oder die URL ins Feld kopieren. Auto-Import liefert Name + Foto, wenn das Portal es zulässt (Booking.com & Hotels.com blockieren oft); ansonsten weiter unten manuell eintragen.")
+                    Text("Workflow: in Safari/Booking den Hotel-Link mit 'Kopieren' in die Zwischenablage legen → hier oben den blauen 'Einfügen'-Button tippen → die URL erscheint und wir versuchen, Hotel-Daten zu laden. Klappt Auto-Import bei Booking/Hotels.com oft nicht (Bot-Schutz) — dann unten einfach Name + Foto-URL manuell eintragen, der Link wird trotzdem gespeichert.")
                 }
 
                 Section("Hotel-Details") {
