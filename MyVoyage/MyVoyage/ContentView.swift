@@ -3,13 +3,26 @@ import SwiftUI
 // MARK: - Theme
 
 enum AppTheme {
-    static let bg = Color(hex: 0x0A0A0F)
-    static let surface = Color.white.opacity(0.03)
-    static let border = Color.white.opacity(0.07)
+    // Solid mittel-blau für Toolbar, Sheets, Chip-Text — passt zur
+    // Mitte des Gradients.
+    static let bg = Color(red: 0.10, green: 0.20, blue: 0.42)
+    // Hellerer Blau-Verlauf für die App-Hintergründe — gleiche Farb-
+    // welt wie der MyScanPilot-Splash.
+    static let bgGradient = LinearGradient(
+        colors: [
+            Color(red: 0.05, green: 0.15, blue: 0.35),
+            Color(red: 0.15, green: 0.25, blue: 0.50),
+            Color(red: 0.10, green: 0.20, blue: 0.45)
+        ],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+    )
+    static let surface = Color.white.opacity(0.05)
+    static let border = Color.white.opacity(0.10)
     static let text = Color(hex: 0xE8E4D9)
-    static let textSubtle = Color(hex: 0xE8E4D9).opacity(0.35)
-    static let textMuted = Color(hex: 0xE8E4D9).opacity(0.55)
-    static let accent = Color(hex: 0x3B82F6)
+    static let textSubtle = Color(hex: 0xE8E4D9).opacity(0.45)
+    static let textMuted = Color(hex: 0xE8E4D9).opacity(0.65)
+    static let accent = Color(hex: 0x60A5FA)  // helleres Blau für Kontrast auf blauem Hintergrund
 }
 
 extension Color {
@@ -552,7 +565,7 @@ struct TripsListView: View {
 
     var body: some View {
         ZStack {
-            AppTheme.bg.ignoresSafeArea()
+            AppTheme.bgGradient.ignoresSafeArea()
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
@@ -799,7 +812,7 @@ struct TripDetailView: View {
 
     var body: some View {
         ZStack {
-            AppTheme.bg.ignoresSafeArea()
+            AppTheme.bgGradient.ignoresSafeArea()
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
@@ -3128,10 +3141,7 @@ struct SplashView: View {
 
     var body: some View {
         ZStack {
-            LinearGradient(
-                colors: [Color(hex: 0x0A0A0F), Color(hex: 0x101A33), Color(hex: 0x0A0A0F)],
-                startPoint: .topLeading, endPoint: .bottomTrailing
-            )
+            AppTheme.bgGradient
             .ignoresSafeArea()
 
             Circle()
