@@ -808,6 +808,7 @@ struct TripDetailView: View {
 
     @State private var showTravelers = false
     @State private var showDeleteConfirm = false
+    @State private var showBookingImport = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -844,6 +845,12 @@ struct TripDetailView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
+                    Button {
+                        showBookingImport = true
+                    } label: {
+                        Label("Buchung importieren (PDF)", systemImage: "doc.text.magnifyingglass")
+                    }
+                    Divider()
                     Button(role: .destructive) {
                         showDeleteConfirm = true
                     } label: {
@@ -859,6 +866,9 @@ struct TripDetailView: View {
             TravelersSheet(travelers: $trip.travelers)
                 .presentationDetents([.medium, .large])
                 .presentationBackground(AppTheme.bg)
+        }
+        .sheet(isPresented: $showBookingImport) {
+            BookingImportSheet(trip: trip, store: store)
         }
         .confirmationDialog("Reise wirklich löschen?", isPresented: $showDeleteConfirm, titleVisibility: .visible) {
             Button("Löschen", role: .destructive) {
@@ -3111,6 +3121,700 @@ struct HotelEditorSheet: View {
             : nil
         onSave(candidate)
         dismiss()
+    }
+}
+
+// MARK: - Booking Import (PDF → Apple Intelligence → Trip)
+
+import FoundationModels
+import PDFKit
+import Vision
+import UniformTypeIdentifiers
+
+/// Strukturierter Output, den Apple Intelligence aus dem PDF-Text extrahieren
+/// soll. Per `@Generable` markiert + jedes Feld mit `@Guide` beschrieben,
+/// damit das on-device LLM weiß was rein gehört. Wird in `BookingExtractor`
+/// als generating-Type an `LanguageModelSession.respond` übergeben.
+@Generable
+struct ExtractedBooking: Equatable {
+    @Guide(description: "Type of booking. Must be one of: hotel, flight, train, car, bus")
+    var bookingType: String
+
+    @Guide(description: "Hotel name, flight number with airline, or train number. Examples: 'H10 Casa Mimosa', 'LH4291 Lufthansa', 'ICE 615'")
+    var name: String
+
+    @Guide(description: "Departure or hotel city. For flights: city of origin airport. For hotels: city the hotel is in.")
+    var fromLocation: String?
+
+    @Guide(description: "Arrival city. Empty for hotels.")
+    var toLocation: String?
+
+    @Guide(description: "Check-in date or departure date in ISO format YYYY-MM-DD")
+    var startDate: String?
+
+    @Guide(description: "Check-out date or arrival date in ISO format YYYY-MM-DD")
+    var endDate: String?
+
+    @Guide(description: "Booking confirmation number or PNR")
+    var bookingReference: String?
+
+    @Guide(description: "Total amount as a number, no currency symbol")
+    var totalPrice: Double?
+
+    @Guide(description: "Currency code, e.g. EUR, USD, GBP")
+    var currency: String?
+
+    @Guide(description: "Number of adult travelers")
+    var adults: Int?
+
+    @Guide(description: "Number of child travelers")
+    var children: Int?
+}
+
+extension ExtractedBooking {
+    /// Konvertiert das LLM-Output in unseren internen TransportType, falls möglich.
+    var transportType: TransportType? {
+        switch bookingType.lowercased() {
+        case "hotel": .hotel
+        case "flight", "flug": .flight
+        case "train", "zug", "rail": .train
+        case "car", "rental", "mietwagen": .car
+        case "bus", "coach": .bus
+        default: nil
+        }
+    }
+
+    var parsedStartDate: Date? { parseISODate(startDate) }
+    var parsedEndDate: Date? { parseISODate(endDate) }
+
+    private func parseISODate(_ s: String?) -> Date? {
+        guard let s = s?.trimmingCharacters(in: .whitespaces), !s.isEmpty else { return nil }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f.date(from: s)
+    }
+}
+
+// MARK: - PDF Text Extraction
+
+enum BookingPDFExtractor {
+    /// Versucht erst PDFKit (schnell, wenn PDF einen Text-Layer hat), fällt
+    /// auf Vision-OCR zurück wenn das PDF nur Bilder enthält (Scans).
+    static func extractText(from url: URL) async -> String? {
+        if let text = textViaPDFKit(url: url), !text.isEmpty {
+            return text
+        }
+        return await textViaVisionOCR(url: url)
+    }
+
+    private static func textViaPDFKit(url: URL) -> String? {
+        guard let pdf = PDFDocument(url: url) else { return nil }
+        var combined = ""
+        for i in 0..<pdf.pageCount {
+            if let s = pdf.page(at: i)?.string {
+                combined += s + "\n"
+            }
+        }
+        let trimmed = combined.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Wenn weniger als ~50 Zeichen → wahrscheinlich nur Bilder im PDF
+        return trimmed.count >= 50 ? trimmed : nil
+    }
+
+    private static func textViaVisionOCR(url: URL) async -> String? {
+        guard let pdf = PDFDocument(url: url) else { return nil }
+        var combined = ""
+        for i in 0..<pdf.pageCount {
+            guard let page = pdf.page(at: i) else { continue }
+            let bounds = page.bounds(for: .mediaBox)
+            let renderer = UIGraphicsImageRenderer(size: bounds.size)
+            let image = renderer.image { ctx in
+                UIColor.white.set()
+                ctx.fill(bounds)
+                ctx.cgContext.translateBy(x: 0, y: bounds.height)
+                ctx.cgContext.scaleBy(x: 1, y: -1)
+                page.draw(with: .mediaBox, to: ctx.cgContext)
+            }
+            guard let cgImage = image.cgImage else { continue }
+            let pageText = await Self.recognizeText(in: cgImage)
+            combined += pageText + "\n"
+        }
+        let trimmed = combined.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func recognizeText(in cgImage: CGImage) async -> String {
+        await withCheckedContinuation { continuation in
+            let request = VNRecognizeTextRequest { req, _ in
+                let observations = req.results as? [VNRecognizedTextObservation] ?? []
+                let lines = observations.compactMap { $0.topCandidates(1).first?.string }
+                continuation.resume(returning: lines.joined(separator: "\n"))
+            }
+            request.recognitionLanguages = ["de-DE", "en-US"]
+            request.usesLanguageCorrection = true
+            request.recognitionLevel = .accurate
+
+            let handler = VNImageRequestHandler(cgImage: cgImage)
+            do {
+                try handler.perform([request])
+            } catch {
+                continuation.resume(returning: "")
+            }
+        }
+    }
+}
+
+// MARK: - Apple Intelligence Extraction
+
+enum BookingExtractor {
+    enum ExtractorError: LocalizedError {
+        case appleIntelligenceUnavailable(String)
+        case llmFailed(String)
+        case noContent
+
+        var errorDescription: String? {
+            switch self {
+            case .appleIntelligenceUnavailable(let detail):
+                "Apple Intelligence ist nicht verfügbar: \(detail)"
+            case .llmFailed(let detail):
+                "Apple Intelligence konnte die Bestätigung nicht auswerten: \(detail)"
+            case .noContent:
+                "Keine Daten aus dem PDF gelesen."
+            }
+        }
+    }
+
+    static func extract(fromText text: String) async throws -> ExtractedBooking {
+        // Prüfen ob on-device Model verfügbar ist
+        let model = SystemLanguageModel.default
+        switch model.availability {
+        case .available:
+            break
+        case .unavailable(.appleIntelligenceNotEnabled):
+            throw ExtractorError.appleIntelligenceUnavailable(
+                "Aktiviere Apple Intelligence in den Einstellungen → Apple Intelligence & Siri."
+            )
+        case .unavailable(.deviceNotEligible):
+            throw ExtractorError.appleIntelligenceUnavailable(
+                "Dein iPhone unterstützt das on-device Apple-Intelligence-Modell nicht (benötigt iPhone 15 Pro oder neuer)."
+            )
+        case .unavailable(.modelNotReady):
+            throw ExtractorError.appleIntelligenceUnavailable(
+                "Das Modell wird gerade geladen. Bitte gleich noch einmal versuchen."
+            )
+        case .unavailable(let other):
+            throw ExtractorError.appleIntelligenceUnavailable("\(other)")
+        }
+
+        let session = LanguageModelSession(instructions: """
+            You parse travel booking confirmation emails and PDFs. Extract \
+            structured information into the requested format. Use ISO 8601 \
+            (YYYY-MM-DD) for all dates. Recognize confirmations in German and \
+            English. If a field is not mentioned in the text, leave it empty.
+            """)
+
+        do {
+            let response = try await session.respond(
+                to: """
+                Extract the booking details from the following confirmation text. \
+                Determine whether it is a hotel, flight, train, car rental, or bus \
+                booking. Use the explicit dates from the document, not today's date.
+
+                Confirmation text:
+                ---
+                \(text.prefix(8000))
+                ---
+                """,
+                generating: ExtractedBooking.self
+            )
+            return response.content
+        } catch {
+            throw ExtractorError.llmFailed("\(error.localizedDescription)")
+        }
+    }
+}
+
+// MARK: - Booking Apply Logic
+
+enum BookingApplier {
+    /// Versucht, eine passende existierende Reise zu finden — basierend auf
+    /// Datums-Nähe (±21 Tage) und Stadt-Match mit irgendeinem Segment.
+    static func findMatchingTrip(in trips: [Trip], for booking: ExtractedBooking) -> Trip? {
+        guard let bookingDate = booking.parsedStartDate else { return trips.first }
+
+        // 1. Exact match: Stadt kommt in einem Segment der Reise vor + Datum nahe
+        let cities = [booking.fromLocation, booking.toLocation].compactMap { $0?.lowercased() }
+        for trip in trips {
+            for seg in trip.segments {
+                let segCities = [seg.from, seg.to].map { $0.lowercased() }
+                let cityHit = cities.contains { city in
+                    segCities.contains { $0.contains(city) || city.contains($0) }
+                }
+                if cityHit, let segDate = seg.date {
+                    let diff = abs(segDate.timeIntervalSince(bookingDate))
+                    if diff < 86400 * 21 { return trip }
+                }
+            }
+        }
+
+        // 2. Fallback: irgendein Segment-Datum innerhalb 21 Tage
+        for trip in trips {
+            for seg in trip.segments {
+                if let segDate = seg.date,
+                   abs(segDate.timeIntervalSince(bookingDate)) < 86400 * 21 {
+                    return trip
+                }
+            }
+        }
+        return trips.first
+    }
+
+    /// Wendet die Buchung auf eine Reise an: für Hotels wird die Hotel-Etappe
+    /// um einen HotelCandidate ergänzt, für Flug/Zug/Auto/Bus wird ein
+    /// passendes Segment ergänzt oder ein neues erstellt.
+    static func apply(_ booking: ExtractedBooking, to trip: Trip) -> ApplyResult {
+        guard let type = booking.transportType else {
+            return .failed("Unbekannter Buchungstyp: \(booking.bookingType)")
+        }
+
+        if type == .hotel {
+            return applyHotel(booking, to: trip)
+        } else {
+            return applyTransport(booking, type: type, to: trip)
+        }
+    }
+
+    enum ApplyResult: Equatable {
+        case addedHotelCandidate(segmentID: UUID, candidateID: UUID)
+        case updatedSegment(segmentID: UUID)
+        case createdSegment(segmentID: UUID)
+        case failed(String)
+    }
+
+    private static func applyHotel(_ booking: ExtractedBooking, to trip: Trip) -> ApplyResult {
+        let cityHint = booking.toLocation ?? booking.fromLocation ?? ""
+
+        // Existierende Hotel-Etappe mit gleicher Stadt finden
+        let hotelSegmentIdx = trip.segments.firstIndex { seg in
+            seg.type == .hotel &&
+            (seg.to.lowercased().contains(cityHint.lowercased()) ||
+             cityHint.lowercased().contains(seg.to.lowercased()))
+        }
+
+        // Oder Hotel-Etappe mit ähnlichem Datum
+        let dateMatchIdx: Int? = {
+            guard hotelSegmentIdx == nil, let bookingDate = booking.parsedStartDate else { return nil }
+            return trip.segments.firstIndex { seg in
+                seg.type == .hotel &&
+                seg.date.map { abs($0.timeIntervalSince(bookingDate)) < 86400 * 5 } == true
+            }
+        }()
+
+        let targetIdx = hotelSegmentIdx ?? dateMatchIdx
+
+        let candidate = makeHotelCandidate(from: booking)
+
+        if let idx = targetIdx {
+            trip.segments[idx].hotelCandidates.append(candidate)
+            return .addedHotelCandidate(segmentID: trip.segments[idx].id, candidateID: candidate.id)
+        }
+
+        // Neue Hotel-Etappe anlegen
+        var newSeg = TripSegment(
+            type: .hotel,
+            from: "",
+            to: cityHint,
+            date: booking.parsedStartDate,
+            note: bookingNote(from: booking),
+            hotelCandidates: [candidate]
+        )
+        _ = newSeg.id  // silence
+        trip.segments.append(newSeg)
+        return .createdSegment(segmentID: newSeg.id)
+    }
+
+    private static func applyTransport(
+        _ booking: ExtractedBooking,
+        type: TransportType,
+        to trip: Trip
+    ) -> ApplyResult {
+        // Passende Etappe per Typ + (Strecke ODER Datum)
+        let from = booking.fromLocation?.lowercased() ?? ""
+        let to = booking.toLocation?.lowercased() ?? ""
+
+        let idx = trip.segments.firstIndex { seg in
+            guard seg.type == type else { return false }
+            let segFrom = seg.from.lowercased()
+            let segTo = seg.to.lowercased()
+            let fromHit = !from.isEmpty && (segFrom.contains(from) || from.contains(segFrom))
+            let toHit = !to.isEmpty && (segTo.contains(to) || to.contains(segTo))
+            if fromHit && toHit { return true }
+            if let d = seg.date, let bd = booking.parsedStartDate,
+               abs(d.timeIntervalSince(bd)) < 86400 * 2 {
+                return fromHit || toHit
+            }
+            return false
+        }
+
+        if let idx {
+            // Existing segment ergänzen
+            var seg = trip.segments[idx]
+            if let d = booking.parsedStartDate { seg.date = d }
+            if seg.from.isEmpty, let f = booking.fromLocation { seg.from = f }
+            if seg.to.isEmpty, let t = booking.toLocation { seg.to = t }
+            seg.note = mergeNotes(existing: seg.note, new: bookingNote(from: booking))
+            trip.segments[idx] = seg
+            return .updatedSegment(segmentID: seg.id)
+        }
+
+        // Neues Segment anlegen
+        let newSeg = TripSegment(
+            type: type,
+            from: booking.fromLocation ?? "",
+            to: booking.toLocation ?? "",
+            date: booking.parsedStartDate,
+            note: bookingNote(from: booking)
+        )
+        trip.segments.append(newSeg)
+        return .createdSegment(segmentID: newSeg.id)
+    }
+
+    private static func makeHotelCandidate(from booking: ExtractedBooking) -> HotelCandidate {
+        var c = HotelCandidate(name: booking.name)
+        c.status = .booked
+        c.bookingReference = booking.bookingReference
+        if let price = booking.totalPrice {
+            // Wenn end-start date bekannt, durch Nächte teilen für Preis/Nacht
+            if let s = booking.parsedStartDate, let e = booking.parsedEndDate {
+                let nights = max(1, Calendar.current.dateComponents([.day], from: s, to: e).day ?? 1)
+                c.pricePerNight = price / Double(nights)
+            } else {
+                c.pricePerNight = price
+            }
+        }
+        c.notes = bookingNote(from: booking)
+        return c
+    }
+
+    private static func bookingNote(from booking: ExtractedBooking) -> String {
+        var parts: [String] = []
+        if let ref = booking.bookingReference, !ref.isEmpty {
+            parts.append("Buchung: \(ref)")
+        }
+        if let price = booking.totalPrice {
+            let cur = booking.currency ?? ""
+            parts.append("Preis: \(Int(price)) \(cur)".trimmingCharacters(in: .whitespaces))
+        }
+        if let a = booking.adults {
+            var travelers = "\(a) Erw."
+            if let c = booking.children, c > 0 { travelers += " + \(c) Kind\(c > 1 ? "er" : "")" }
+            parts.append(travelers)
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private static func mergeNotes(existing: String, new: String) -> String {
+        if existing.isEmpty { return new }
+        if new.isEmpty { return existing }
+        if existing.contains(new) { return existing }
+        return "\(existing)\n\(new)"
+    }
+}
+
+// MARK: - Booking Import Sheet
+
+struct BookingImportSheet: View {
+    let trip: Trip
+    let store: TripsStore
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var step: Step = .picking
+    @State private var pdfURL: URL?
+    @State private var rawText: String = ""
+    @State private var extracted: ExtractedBooking?
+    @State private var targetTrip: Trip
+    @State private var errorMessage: String?
+    @State private var showFileImporter = true
+    @State private var applyResult: BookingApplier.ApplyResult?
+
+    // Editierbare Felder (von extracted vorausgefüllt)
+    @State private var editType: TransportType = .hotel
+    @State private var editName: String = ""
+    @State private var editFrom: String = ""
+    @State private var editTo: String = ""
+    @State private var editStartDate: Date = Date()
+    @State private var editEndDate: Date = Date()
+    @State private var editHasEndDate: Bool = false
+    @State private var editReference: String = ""
+    @State private var editPrice: String = ""
+    @State private var editCurrency: String = "EUR"
+
+    init(trip: Trip, store: TripsStore) {
+        self.trip = trip
+        self.store = store
+        self._targetTrip = State(initialValue: trip)
+    }
+
+    enum Step {
+        case picking, processing, review, done
+    }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                switch step {
+                case .picking:    pickingView
+                case .processing: processingView
+                case .review:     reviewView
+                case .done:       doneView
+                }
+            }
+            .navigationTitle("Buchung importieren")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Abbrechen") { dismiss() }
+                }
+                if step == .review {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Übernehmen") { applyAndDismiss() }
+                            .disabled(editName.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                }
+            }
+        }
+        .fileImporter(
+            isPresented: $showFileImporter,
+            allowedContentTypes: [.pdf],
+            allowsMultipleSelection: false
+        ) { result in
+            handleFileImport(result)
+        }
+    }
+
+    private var pickingView: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "doc.text.magnifyingglass")
+                .font(.system(size: 48))
+                .foregroundStyle(AppTheme.accent)
+            Text("PDF einer Buchungsbestätigung wählen")
+                .font(.headline)
+            Text("Die App liest den Text mit Apple Intelligence aus und ergänzt deine Reise — du kannst alles vor dem Speichern bearbeiten.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+            }
+            Button {
+                showFileImporter = true
+            } label: {
+                Label("PDF auswählen", systemImage: "doc.badge.plus")
+                    .padding(.horizontal, 8)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+        }
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var processingView: some View {
+        VStack(spacing: 16) {
+            ProgressView().scaleEffect(1.5)
+                .padding(.bottom, 8)
+            Text("Apple Intelligence liest die Bestätigung…")
+                .font(.headline)
+            Text("Das passiert komplett auf deinem iPhone — keine Daten verlassen das Gerät.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var reviewView: some View {
+        Form {
+            Section("Typ") {
+                Picker("Buchungstyp", selection: $editType) {
+                    ForEach(TransportType.allCases) { t in
+                        Label(t.label, systemImage: t.systemImage).tag(t)
+                    }
+                }
+                .pickerStyle(.menu)
+            }
+
+            Section(editType == .hotel ? "Hotel" : "Strecke") {
+                TextField(editType == .hotel ? "Hotel-Name" : "Flugnummer / Zug / Anbieter", text: $editName)
+                if editType != .hotel {
+                    TextField("Von", text: $editFrom)
+                }
+                TextField(editType == .hotel ? "Ort" : "Nach", text: $editTo)
+            }
+
+            Section("Datum") {
+                DatePicker(editType == .hotel ? "Check-in" : "Abfahrt", selection: $editStartDate, displayedComponents: .date)
+                Toggle(editType == .hotel ? "Check-out angeben" : "Ankunft angeben", isOn: $editHasEndDate)
+                if editHasEndDate {
+                    DatePicker(editType == .hotel ? "Check-out" : "Ankunft", selection: $editEndDate, displayedComponents: .date)
+                }
+            }
+
+            Section("Details") {
+                TextField("Buchungs-Referenz", text: $editReference)
+                HStack {
+                    Text("Preis gesamt")
+                    Spacer()
+                    TextField("0", text: $editPrice).keyboardType(.decimalPad)
+                        .multilineTextAlignment(.trailing).frame(width: 100)
+                    TextField("EUR", text: $editCurrency).frame(width: 50)
+                        .multilineTextAlignment(.trailing)
+                        .textInputAutocapitalization(.characters)
+                }
+            }
+
+            Section("Zielreise") {
+                Picker("Reise", selection: $targetTrip) {
+                    ForEach(store.trips) { t in
+                        Text(t.name).tag(t)
+                    }
+                }
+                .pickerStyle(.menu)
+            }
+
+            Section {
+                Text("Mit 'Übernehmen' wird die Buchung in der gewählten Reise gespeichert. Hotels landen als Vorschlag mit Status 'Gebucht', andere Buchungen ergänzen ein passendes Segment oder werden neu angelegt.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var doneView: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "checkmark.seal.fill")
+                .font(.system(size: 56))
+                .foregroundStyle(.green)
+            Text("Buchung übernommen")
+                .font(.headline)
+            if let r = applyResult {
+                Text(describe(result: r))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+            }
+            Button("Fertig") { dismiss() }
+                .buttonStyle(.borderedProminent)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func describe(result: BookingApplier.ApplyResult) -> String {
+        switch result {
+        case .addedHotelCandidate: "Hotel wurde der passenden Etappe als gebuchter Vorschlag hinzugefügt."
+        case .updatedSegment: "Bestehende Etappe wurde mit Buchungs-Details ergänzt."
+        case .createdSegment: "Neue Etappe wurde angelegt."
+        case .failed(let msg): "Fehler: \(msg)"
+        }
+    }
+
+    // MARK: Handlers
+
+    private func handleFileImport(_ result: Result<[URL], Error>) {
+        switch result {
+        case .failure(let error):
+            errorMessage = "PDF konnte nicht geladen werden: \(error.localizedDescription)"
+        case .success(let urls):
+            guard let url = urls.first else { return }
+            pdfURL = url
+            step = .processing
+            Task { await processPDF(at: url) }
+        }
+    }
+
+    private func processPDF(at url: URL) async {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+
+        guard let text = await BookingPDFExtractor.extractText(from: url) else {
+            await MainActor.run {
+                errorMessage = "Konnte aus dem PDF keinen Text lesen."
+                step = .picking
+            }
+            return
+        }
+        rawText = text
+
+        do {
+            let result = try await BookingExtractor.extract(fromText: text)
+            await MainActor.run {
+                extracted = result
+                fillEditFields(from: result)
+                step = .review
+            }
+        } catch {
+            await MainActor.run {
+                errorMessage = error.localizedDescription
+                step = .picking
+            }
+        }
+    }
+
+    private func fillEditFields(from booking: ExtractedBooking) {
+        editType = booking.transportType ?? .hotel
+        editName = booking.name
+        editFrom = booking.fromLocation ?? ""
+        editTo = booking.toLocation ?? ""
+        editStartDate = booking.parsedStartDate ?? Date()
+        if let end = booking.parsedEndDate {
+            editEndDate = end
+            editHasEndDate = true
+        } else {
+            editEndDate = editStartDate
+            editHasEndDate = false
+        }
+        editReference = booking.bookingReference ?? ""
+        editPrice = booking.totalPrice.map { String(format: "%.2f", $0) } ?? ""
+        editCurrency = booking.currency ?? "EUR"
+
+        // Trip-Matching-Vorschlag
+        if let matched = BookingApplier.findMatchingTrip(in: store.trips, for: booking) {
+            targetTrip = matched
+        }
+    }
+
+    private func applyAndDismiss() {
+        let edited = ExtractedBooking(
+            bookingType: editType.rawValue,
+            name: editName.trimmingCharacters(in: .whitespaces),
+            fromLocation: editFrom.isEmpty ? nil : editFrom,
+            toLocation: editTo.isEmpty ? nil : editTo,
+            startDate: isoString(editStartDate),
+            endDate: editHasEndDate ? isoString(editEndDate) : nil,
+            bookingReference: editReference.isEmpty ? nil : editReference,
+            totalPrice: Double(editPrice.replacingOccurrences(of: ",", with: ".")),
+            currency: editCurrency.isEmpty ? nil : editCurrency,
+            adults: nil,
+            children: nil
+        )
+        let result = BookingApplier.apply(edited, to: targetTrip)
+        applyResult = result
+        store.save()
+        step = .done
+    }
+
+    private func isoString(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f.string(from: date)
     }
 }
 
