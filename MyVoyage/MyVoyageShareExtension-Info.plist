@@ -15,11 +15,7 @@
 				<key>NSExtensionActivationSupportsAttachmentsWithMaxCount</key>
 				<integer>1</integer>
 			</dict>
-			<key>NSExtensionJavaScriptPreprocessingFile</key>
-			<string></string>
 		</dict>
-		<key>NSExtensionMainStoryboard</key>
-		<string></string>
 		<key>NSExtensionPrincipalClass</key>
 		<string>$(PRODUCT_MODULE_NAME).ShareViewController</string>
 		<key>NSExtensionPointIdentifier</key>
