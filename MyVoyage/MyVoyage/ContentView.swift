@@ -587,7 +587,7 @@ struct ContentView: View {
         }
         .sheet(item: $pendingShareImport) { url in
             BookingImportSheet(
-                trip: store.trips.first ?? store.add(named: "Neue Reise"),
+                trip: store.trips.first,
                 store: store,
                 preloadedPDF: url
             )
@@ -644,6 +644,8 @@ struct TripsListView: View {
     @State private var showResetConfirm = false
     @State private var showDeleteAllConfirm = false
     @State private var deletionTarget: Trip? = nil
+    @State private var showImportPDFPicker = false
+    @State private var importPDFURL: URL? = nil
 
     private let columns = [GridItem(.adaptive(minimum: 160, maximum: 220), spacing: 14)]
 
@@ -670,6 +672,12 @@ struct TripsListView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Button {
+                        showImportPDFPicker = true
+                    } label: {
+                        Label("Buchung importieren (PDF)", systemImage: "doc.text.magnifyingglass")
+                    }
+                    Divider()
+                    Button {
                         onOpenSettings?()
                     } label: {
                         Label("Einstellungen", systemImage: "gear")
@@ -690,6 +698,22 @@ struct TripsListView: View {
                         .foregroundStyle(AppTheme.text)
                 }
             }
+        }
+        .fileImporter(
+            isPresented: $showImportPDFPicker,
+            allowedContentTypes: [.pdf],
+            allowsMultipleSelection: false
+        ) { result in
+            if case let .success(urls) = result, let url = urls.first {
+                importPDFURL = url
+            }
+        }
+        .sheet(item: $importPDFURL) { url in
+            BookingImportSheet(
+                trip: store.trips.first,
+                store: store,
+                preloadedPDF: url
+            )
         }
         .navigationDestination(item: $pushNewTrip) { trip in
             TripDetailView(trip: trip, store: store)
@@ -3727,7 +3751,10 @@ enum BookingApplier {
 // MARK: - Booking Import Sheet
 
 struct BookingImportSheet: View {
-    let trip: Trip
+    /// Initial preselected trip — `nil` when invoked from the global
+    /// overview / share extension and no trip exists yet. The sheet then
+    /// guides the user to create one before applying the booking.
+    let trip: Trip?
     let store: TripsStore
     /// When supplied (e.g. via the Share Extension), the file-picker step is
     /// skipped and processing starts immediately. The caller is responsible
@@ -3739,7 +3766,7 @@ struct BookingImportSheet: View {
     @State private var pdfURL: URL?
     @State private var rawText: String = ""
     @State private var extracted: ExtractedBooking?
-    @State private var targetTrip: Trip
+    @State private var targetTrip: Trip?
     @State private var errorMessage: String?
     @State private var showFileImporter: Bool
     @State private var applyResult: BookingApplier.ApplyResult?
@@ -3765,7 +3792,7 @@ struct BookingImportSheet: View {
     @State private var duplicateMatch: BookingApplier.DuplicateMatch?
     @State private var showDuplicateConfirm = false
 
-    init(trip: Trip, store: TripsStore, preloadedPDF: URL? = nil) {
+    init(trip: Trip?, store: TripsStore, preloadedPDF: URL? = nil) {
         self.trip = trip
         self.store = store
         self.preloadedPDF = preloadedPDF
@@ -3804,7 +3831,10 @@ struct BookingImportSheet: View {
                                 applyAndDismiss()
                             }
                         }
-                        .disabled(editName.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .disabled(
+                            editName.trimmingCharacters(in: .whitespaces).isEmpty ||
+                            targetTrip == nil
+                        )
                     }
                 }
             }
@@ -3973,7 +4003,7 @@ struct BookingImportSheet: View {
                 }
                 Picker("Zielreise", selection: $targetTrip) {
                     ForEach(store.trips) { t in
-                        Text(t.name).tag(t)
+                        Text(t.name).tag(Optional(t))
                     }
                 }
                 .pickerStyle(.menu)
@@ -4005,7 +4035,7 @@ struct BookingImportSheet: View {
                 Divider().padding(.vertical, 4)
                 Picker("Stattdessen vorhandene Reise wählen", selection: $targetTrip) {
                     ForEach(store.trips) { t in
-                        Text(t.name).tag(t)
+                        Text(t.name).tag(Optional(t))
                     }
                 }
                 .pickerStyle(.menu)
@@ -4173,7 +4203,12 @@ struct BookingImportSheet: View {
             adults: nil,
             children: nil
         )
-        let result = BookingApplier.apply(edited, to: targetTrip)
+        guard let trip = targetTrip else {
+            // Sollte nicht passieren — der Übernehmen-Button ist disabled
+            // wenn keine Reise gewählt ist. Defensiv abbrechen.
+            return
+        }
+        let result = BookingApplier.apply(edited, to: trip)
         applyResult = result
         store.save()
         step = .done
