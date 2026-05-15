@@ -3808,16 +3808,22 @@ struct BookingImportSheet: View {
 
     var body: some View {
         NavigationStack {
-            Group {
-                switch step {
-                case .picking:    pickingView
-                case .processing: processingView
-                case .review:     reviewView
-                case .done:       doneView
+            ZStack {
+                AppTheme.bgGradient.ignoresSafeArea()
+                Group {
+                    switch step {
+                    case .picking:    pickingView
+                    case .processing: processingView
+                    case .review:     reviewView
+                    case .done:       doneView
+                    }
                 }
             }
             .navigationTitle("Buchung importieren")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(AppTheme.bg, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Abbrechen") { dismiss() }
@@ -3962,6 +3968,7 @@ struct BookingImportSheet: View {
                     .foregroundStyle(.secondary)
             }
         }
+        .scrollContentBackground(.hidden)
     }
 
     @ViewBuilder

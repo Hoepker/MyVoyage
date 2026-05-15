@@ -22,8 +22,13 @@ struct SettingsView: View {
                 iCloudSection
                 aboutSection
             }
+            .scrollContentBackground(.hidden)
+            .background(AppTheme.bgGradient.ignoresSafeArea())
             .navigationTitle("Einstellungen")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(AppTheme.bg, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Fertig") {
@@ -38,6 +43,8 @@ struct SettingsView: View {
                 Text(migrationErrorText)
             }
         }
+        .tint(AppTheme.accent)
+        .preferredColorScheme(.dark)
     }
 
     // MARK: Sections
