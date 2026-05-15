@@ -6,7 +6,18 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		195E270A2FB77466008A9343 /* MyVoyageShareExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 195E27002FB77465008A9343 /* MyVoyageShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
+		195E27082FB77466008A9343 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 19D32F972FAF081500CBBE89 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 195E26FF2FB77465008A9343;
+			remoteInfo = MyVoyageShareExtension;
+		};
 		19D32FAD2FAF081600CBBE89 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 19D32F972FAF081500CBBE89 /* Project object */;
@@ -23,13 +34,33 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		195E270B2FB77466008A9343 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				195E270A2FB77466008A9343 /* MyVoyageShareExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		195E27002FB77465008A9343 /* MyVoyageShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = MyVoyageShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		19D32F9F2FAF081500CBBE89 /* MyVoyage.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MyVoyage.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		19D32FAC2FAF081600CBBE89 /* MyVoyageTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MyVoyageTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		19D32FB62FAF081600CBBE89 /* MyVoyageUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MyVoyageUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		195E27012FB77465008A9343 /* MyVoyageShareExtension */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = MyVoyageShareExtension;
+			sourceTree = "<group>";
+		};
 		19D32FA12FAF081500CBBE89 /* MyVoyage */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = MyVoyage;
@@ -48,6 +79,13 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		195E26FD2FB77465008A9343 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		19D32F9C2FAF081500CBBE89 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -78,6 +116,7 @@
 				19D32FA12FAF081500CBBE89 /* MyVoyage */,
 				19D32FAF2FAF081600CBBE89 /* MyVoyageTests */,
 				19D32FB92FAF081600CBBE89 /* MyVoyageUITests */,
+				195E27012FB77465008A9343 /* MyVoyageShareExtension */,
 				19D32FA02FAF081500CBBE89 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -88,6 +127,7 @@
 				19D32F9F2FAF081500CBBE89 /* MyVoyage.app */,
 				19D32FAC2FAF081600CBBE89 /* MyVoyageTests.xctest */,
 				19D32FB62FAF081600CBBE89 /* MyVoyageUITests.xctest */,
+				195E27002FB77465008A9343 /* MyVoyageShareExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -95,6 +135,28 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		195E26FF2FB77465008A9343 /* MyVoyageShareExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 195E270F2FB77466008A9343 /* Build configuration list for PBXNativeTarget "MyVoyageShareExtension" */;
+			buildPhases = (
+				195E26FC2FB77465008A9343 /* Sources */,
+				195E26FD2FB77465008A9343 /* Frameworks */,
+				195E26FE2FB77465008A9343 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				195E27012FB77465008A9343 /* MyVoyageShareExtension */,
+			);
+			name = MyVoyageShareExtension;
+			packageProductDependencies = (
+			);
+			productName = MyVoyageShareExtension;
+			productReference = 195E27002FB77465008A9343 /* MyVoyageShareExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		19D32F9E2FAF081500CBBE89 /* MyVoyage */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 19D32FC02FAF081600CBBE89 /* Build configuration list for PBXNativeTarget "MyVoyage" */;
@@ -102,10 +164,12 @@
 				19D32F9B2FAF081500CBBE89 /* Sources */,
 				19D32F9C2FAF081500CBBE89 /* Frameworks */,
 				19D32F9D2FAF081500CBBE89 /* Resources */,
+				195E270B2FB77466008A9343 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				195E27092FB77466008A9343 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				19D32FA12FAF081500CBBE89 /* MyVoyage */,
@@ -170,9 +234,13 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 2640;
+				LastSwiftUpdateCheck = 2650;
 				LastUpgradeCheck = 2640;
 				TargetAttributes = {
+					195E26FF2FB77465008A9343 = {
+						CreatedOnToolsVersion = 26.5;
+						LastSwiftMigration = 2650;
+					};
 					19D32F9E2FAF081500CBBE89 = {
 						CreatedOnToolsVersion = 26.4.1;
 					};
@@ -203,11 +271,19 @@
 				19D32F9E2FAF081500CBBE89 /* MyVoyage */,
 				19D32FAB2FAF081600CBBE89 /* MyVoyageTests */,
 				19D32FB52FAF081600CBBE89 /* MyVoyageUITests */,
+				195E26FF2FB77465008A9343 /* MyVoyageShareExtension */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		195E26FE2FB77465008A9343 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		19D32F9D2FAF081500CBBE89 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -232,6 +308,13 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		195E26FC2FB77465008A9343 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		19D32F9B2FAF081500CBBE89 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -256,6 +339,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		195E27092FB77466008A9343 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 195E26FF2FB77465008A9343 /* MyVoyageShareExtension */;
+			targetProxy = 195E27082FB77466008A9343 /* PBXContainerItemProxy */;
+		};
 		19D32FAE2FAF081600CBBE89 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 19D32F9E2FAF081500CBBE89 /* MyVoyage */;
@@ -269,6 +357,67 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		195E270C2FB77466008A9343 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = MyVoyageShareExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = S4UB6HE54Y;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "MyVoyageShareExtension-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = MyVoyage;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.4;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "hoepker-consult.MyVoyage.MyVoyageShareExtension";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		195E270D2FB77466008A9343 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = MyVoyageShareExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = S4UB6HE54Y;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "MyVoyageShareExtension-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = MyVoyage;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.4;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "hoepker-consult.MyVoyage.MyVoyageShareExtension";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 		19D32FBE2FAF081600CBBE89 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -545,6 +694,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		195E270F2FB77466008A9343 /* Build configuration list for PBXNativeTarget "MyVoyageShareExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				195E270C2FB77466008A9343 /* Debug */,
+				195E270D2FB77466008A9343 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		19D32F9A2FAF081500CBBE89 /* Build configuration list for PBXProject "MyVoyage" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

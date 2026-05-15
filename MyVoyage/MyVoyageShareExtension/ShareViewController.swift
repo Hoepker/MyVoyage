@@ -27,7 +27,7 @@ final class ShareViewController: UIViewController {
             return finish(success: false, errorMessage: "Keine Inhalte gefunden.")
         }
 
-        var inboxURL: URL? = FileManager.default
+        let inboxURL: URL? = FileManager.default
             .containerURL(forSecurityApplicationGroupIdentifier: appGroupID)?
             .appendingPathComponent(inboxFolderName, isDirectory: true)
         if let url = inboxURL {
