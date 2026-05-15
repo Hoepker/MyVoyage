@@ -3440,34 +3440,136 @@ enum BookingExtractor {
 enum BookingApplier {
     /// Versucht, eine passende existierende Reise zu finden — basierend auf
     /// Datums-Nähe (±21 Tage) und Stadt-Match mit irgendeinem Segment.
-    static func findMatchingTrip(in trips: [Trip], for booking: ExtractedBooking) -> Trip? {
-        guard let bookingDate = booking.parsedStartDate else { return trips.first }
+    enum TripMatch: Equatable {
+        /// Reise gefunden, die zeitlich (und idealerweise räumlich) zur Buchung passt.
+        case matched(Trip, reason: MatchReason)
+        /// Es gibt Reisen, aber keine passt zum Buchungs-Datum (±21 Tage)
+        /// oder zur Buchungs-Stadt.
+        case noMatch
+        /// Der User hat noch keine einzige Reise angelegt.
+        case noTrips
 
-        // 1. Exact match: Stadt kommt in einem Segment der Reise vor + Datum nahe
+        enum MatchReason: Equatable {
+            case cityAndDate, dateOnly
+        }
+    }
+
+    /// Liefert ein explizites Match-Ergebnis. Wird vom Import-Sheet verwendet,
+    /// um zwischen „passende Reise gefunden", „kein Match" und „keine Reisen"
+    /// zu unterscheiden. Für API-Kompatibilität liefert `findMatchingTrip`
+    /// weiter den heuristischen Best-Match (oder die erste Reise).
+    static func matchTrip(in trips: [Trip], for booking: ExtractedBooking) -> TripMatch {
+        guard !trips.isEmpty else { return .noTrips }
+        guard let bookingDate = booking.parsedStartDate else { return .noMatch }
+
         let cities = [booking.fromLocation, booking.toLocation].compactMap { $0?.lowercased() }
+
+        // 1. Stadt + Datum (±21 Tage)
         for trip in trips {
             for seg in trip.segments {
                 let segCities = [seg.from, seg.to].map { $0.lowercased() }
                 let cityHit = cities.contains { city in
-                    segCities.contains { $0.contains(city) || city.contains($0) }
+                    segCities.contains { !$0.isEmpty && (city.contains($0) || $0.contains(city)) }
                 }
-                if cityHit, let segDate = seg.date {
-                    let diff = abs(segDate.timeIntervalSince(bookingDate))
-                    if diff < 86400 * 21 { return trip }
+                if cityHit, let segDate = seg.date,
+                   abs(segDate.timeIntervalSince(bookingDate)) < 86400 * 21 {
+                    return .matched(trip, reason: .cityAndDate)
                 }
             }
         }
 
-        // 2. Fallback: irgendein Segment-Datum innerhalb 21 Tage
+        // 2. Buchungs-Datum liegt innerhalb [tripStart-7d, tripEnd+7d] einer Reise
         for trip in trips {
-            for seg in trip.segments {
-                if let segDate = seg.date,
-                   abs(segDate.timeIntervalSince(bookingDate)) < 86400 * 21 {
-                    return trip
+            guard let ts = trip.startDate, let te = trip.endDate else { continue }
+            if bookingDate >= ts.addingTimeInterval(-86400 * 7),
+               bookingDate <= te.addingTimeInterval(86400 * 7) {
+                return .matched(trip, reason: .dateOnly)
+            }
+        }
+
+        return .noMatch
+    }
+
+    static func findMatchingTrip(in trips: [Trip], for booking: ExtractedBooking) -> Trip? {
+        switch matchTrip(in: trips, for: booking) {
+        case .matched(let trip, _): return trip
+        case .noMatch, .noTrips: return trips.first
+        }
+    }
+
+    // MARK: - Duplikat-Erkennung
+
+    struct DuplicateMatch: Equatable {
+        let trip: Trip
+        let segmentID: UUID
+        let candidateID: UUID?      // nil ⇒ Transport-Segment, gesetzt ⇒ Hotel-Kandidat
+        let reason: Reason
+
+        enum Reason {
+            case bookingReference
+            case sameNameAndDate
+        }
+
+        static func == (lhs: DuplicateMatch, rhs: DuplicateMatch) -> Bool {
+            lhs.trip.id == rhs.trip.id &&
+            lhs.segmentID == rhs.segmentID &&
+            lhs.candidateID == rhs.candidateID &&
+            lhs.reason == rhs.reason
+        }
+    }
+
+    /// Sucht nach einem bereits importierten Eintrag, der zur Buchung passt.
+    /// Reihenfolge: erst exakte Buchungs-Referenz, danach Typ + Datum (gleicher
+    /// Tag) + Name. Nil wenn nichts gefunden.
+    static func findDuplicate(in trips: [Trip], for booking: ExtractedBooking) -> DuplicateMatch? {
+        // 1) Buchungs-Referenz wiederfinden
+        if let ref = booking.bookingReference?.trimmingCharacters(in: .whitespaces),
+           !ref.isEmpty {
+            let refLow = ref.lowercased()
+            for trip in trips {
+                for seg in trip.segments {
+                    if let hit = seg.hotelCandidates.first(where: {
+                        $0.bookingReference?.lowercased() == refLow
+                    }) {
+                        return .init(trip: trip, segmentID: seg.id,
+                                     candidateID: hit.id, reason: .bookingReference)
+                    }
+                    // Transport: Buchungs-Referenz landet als „Buchung: <ref>" im note
+                    if seg.note.lowercased().contains("buchung: \(refLow)") {
+                        return .init(trip: trip, segmentID: seg.id,
+                                     candidateID: nil, reason: .bookingReference)
+                    }
                 }
             }
         }
-        return trips.first
+
+        // 2) Typ + Datum (gleicher Kalendertag) + Name
+        guard let type = booking.transportType,
+              let bookingDate = booking.parsedStartDate else { return nil }
+        let nameLow = booking.name
+            .trimmingCharacters(in: .whitespaces).lowercased()
+        guard !nameLow.isEmpty else { return nil }
+        let cal = Calendar.current
+
+        for trip in trips {
+            for seg in trip.segments where seg.type == type {
+                guard let d = seg.date, cal.isDate(d, inSameDayAs: bookingDate) else { continue }
+                if type == .hotel {
+                    if let hit = seg.hotelCandidates.first(where: {
+                        $0.name.lowercased() == nameLow
+                    }) {
+                        return .init(trip: trip, segmentID: seg.id,
+                                     candidateID: hit.id, reason: .sameNameAndDate)
+                    }
+                } else {
+                    if seg.note.lowercased().contains(nameLow) {
+                        return .init(trip: trip, segmentID: seg.id,
+                                     candidateID: nil, reason: .sameNameAndDate)
+                    }
+                }
+            }
+        }
+        return nil
     }
 
     /// Wendet die Buchung auf eine Reise an: für Hotels wird die Hotel-Etappe
@@ -3654,6 +3756,15 @@ struct BookingImportSheet: View {
     @State private var editPrice: String = ""
     @State private var editCurrency: String = "EUR"
 
+    // Match-Status für die Zielreise (von fillEditFields berechnet)
+    @State private var matchResult: BookingApplier.TripMatch = .noTrips
+    @State private var newTripNameDraft: String = ""
+
+    // Duplikat-Hinweis: gesetzt, wenn dieselbe Buchung bereits in einer
+    // Reise gefunden wurde (per Buchungs-Referenz oder Name+Datum).
+    @State private var duplicateMatch: BookingApplier.DuplicateMatch?
+    @State private var showDuplicateConfirm = false
+
     init(trip: Trip, store: TripsStore, preloadedPDF: URL? = nil) {
         self.trip = trip
         self.store = store
@@ -3686,11 +3797,28 @@ struct BookingImportSheet: View {
                 }
                 if step == .review {
                     ToolbarItem(placement: .confirmationAction) {
-                        Button("Übernehmen") { applyAndDismiss() }
-                            .disabled(editName.trimmingCharacters(in: .whitespaces).isEmpty)
+                        Button("Übernehmen") {
+                            if duplicateMatch != nil {
+                                showDuplicateConfirm = true
+                            } else {
+                                applyAndDismiss()
+                            }
+                        }
+                        .disabled(editName.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
                 }
             }
+        }
+        .confirmationDialog(
+            duplicateMatch.map { "Buchung ist bereits in „\($0.trip.name)“ importiert." }
+                ?? "Buchung bereits importiert",
+            isPresented: $showDuplicateConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Trotzdem hinzufügen", role: .destructive) { applyAndDismiss() }
+            Button("Abbrechen", role: .cancel) {}
+        } message: {
+            Text("Möchtest du diese Buchung wirklich noch einmal speichern? Sie wird dann doppelt in der Reise erscheinen.")
         }
         .fileImporter(
             isPresented: $showFileImporter,
@@ -3755,6 +3883,9 @@ struct BookingImportSheet: View {
 
     private var reviewView: some View {
         Form {
+            if let dup = duplicateMatch {
+                duplicateBanner(for: dup)
+            }
             Section("Typ") {
                 Picker("Buchungstyp", selection: $editType) {
                     ForEach(TransportType.allCases) { t in
@@ -3793,19 +3924,117 @@ struct BookingImportSheet: View {
                 }
             }
 
-            Section("Zielreise") {
-                Picker("Reise", selection: $targetTrip) {
-                    ForEach(store.trips) { t in
-                        Text(t.name).tag(t)
-                    }
-                }
-                .pickerStyle(.menu)
-            }
+            tripMatchSection
 
             Section {
                 Text("Mit 'Übernehmen' wird die Buchung in der gewählten Reise gespeichert. Hotels landen als Vorschlag mit Status 'Gebucht', andere Buchungen ergänzen ein passendes Segment oder werden neu angelegt.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func duplicateBanner(for dup: BookingApplier.DuplicateMatch) -> some View {
+        Section {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "exclamationmark.octagon.fill")
+                    .foregroundStyle(.red)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Diese Buchung ist bereits importiert")
+                        .font(.subheadline.weight(.semibold))
+                    Text(dup.reason == .bookingReference
+                         ? "Eine Buchung mit derselben Referenz liegt schon in „\(dup.trip.name)“."
+                         : "Eine gleichnamige Buchung am selben Tag liegt schon in „\(dup.trip.name)“.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var tripMatchSection: some View {
+        switch matchResult {
+        case .matched(let trip, let reason):
+            Section {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "checkmark.seal.fill")
+                        .foregroundStyle(.green)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Passt zu „\(trip.name)“")
+                            .font(.subheadline.weight(.semibold))
+                        Text(reason == .cityAndDate
+                             ? "Übereinstimmung in Stadt und Datum."
+                             : "Übereinstimmung im Reise-Zeitraum.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Picker("Zielreise", selection: $targetTrip) {
+                    ForEach(store.trips) { t in
+                        Text(t.name).tag(t)
+                    }
+                }
+                .pickerStyle(.menu)
+            } header: {
+                Text("Zielreise")
+            } footer: {
+                Text("Du kannst über das Auswahlmenü auch eine andere Reise wählen, falls der Vorschlag nicht stimmt.")
+            }
+
+        case .noMatch:
+            Section {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Keine passende Reise gefunden")
+                            .font(.subheadline.weight(.semibold))
+                        Text("Das Buchungs-Datum liegt außerhalb deiner bestehenden Reisen (±21 Tage). Lege eine neue Reise an oder wähle manuell eine bestehende.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                TextField("Name für die neue Reise", text: $newTripNameDraft)
+                Button {
+                    createNewTripFromDraft()
+                } label: {
+                    Label("Neue Reise anlegen", systemImage: "plus.circle.fill")
+                }
+                Divider().padding(.vertical, 4)
+                Picker("Stattdessen vorhandene Reise wählen", selection: $targetTrip) {
+                    ForEach(store.trips) { t in
+                        Text(t.name).tag(t)
+                    }
+                }
+                .pickerStyle(.menu)
+            } header: {
+                Text("Zielreise")
+            }
+
+        case .noTrips:
+            Section {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "suitcase.fill")
+                        .foregroundStyle(AppTheme.accent)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Du hast noch keine Reise angelegt")
+                            .font(.subheadline.weight(.semibold))
+                        Text("Lege jetzt eine Reise für diese Buchung an.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                TextField("Name der Reise", text: $newTripNameDraft)
+                Button {
+                    createNewTripFromDraft()
+                } label: {
+                    Label("Reise anlegen", systemImage: "plus.circle.fill")
+                }
+                .buttonStyle(.borderedProminent)
+            } header: {
+                Text("Zielreise")
             }
         }
     }
@@ -3898,10 +4127,36 @@ struct BookingImportSheet: View {
         editPrice = booking.totalPrice.map { String(format: "%.2f", $0) } ?? ""
         editCurrency = booking.currency ?? "EUR"
 
-        // Trip-Matching-Vorschlag
-        if let matched = BookingApplier.findMatchingTrip(in: store.trips, for: booking) {
-            targetTrip = matched
+        // Trip-Matching: explizit „matched / noMatch / noTrips" auswerten
+        let result = BookingApplier.matchTrip(in: store.trips, for: booking)
+        matchResult = result
+        if case let .matched(trip, _) = result {
+            targetTrip = trip
         }
+        // Default-Name für eine neue Reise: Zielstadt + Jahr der Buchung
+        newTripNameDraft = suggestedNewTripName(from: booking)
+        // Duplikat-Check: gleiche Buchungs-Referenz oder Name+Datum bereits drin?
+        duplicateMatch = BookingApplier.findDuplicate(in: store.trips, for: booking)
+    }
+
+    private func suggestedNewTripName(from booking: ExtractedBooking) -> String {
+        let city = booking.toLocation?.trimmingCharacters(in: .whitespaces)
+            ?? booking.fromLocation?.trimmingCharacters(in: .whitespaces)
+            ?? ""
+        let year: String = {
+            guard let d = booking.parsedStartDate else { return "" }
+            return " \(Calendar.current.component(.year, from: d))"
+        }()
+        let base = city.isEmpty ? "Neue Reise" : city
+        return "\(base)\(year)"
+    }
+
+    private func createNewTripFromDraft() {
+        let trimmed = newTripNameDraft.trimmingCharacters(in: .whitespaces)
+        let name = trimmed.isEmpty ? "Neue Reise" : trimmed
+        let newTrip = store.add(named: name)
+        targetTrip = newTrip
+        matchResult = .matched(newTrip, reason: .cityAndDate)
     }
 
     private func applyAndDismiss() {
