@@ -376,10 +376,18 @@ final class Trip: Identifiable, Hashable, Codable {
 // MARK: - Persistence
 
 enum PersistenceService {
-    static let fileURL: URL = {
+    /// File path that the app currently reads from / writes to. Tracks the
+    /// `iCloudSyncEnabled` setting — when on and an iCloud container is
+    /// reachable, this points into `iCloud Drive/MyVoyage/Documents/`.
+    /// Falls back to the local Documents folder otherwise.
+    static var fileURL: URL {
+        if AppSettings.shared.iCloudSyncEnabled,
+           let cloudDocs = CloudSync.documentsURL {
+            return cloudDocs.appendingPathComponent(CloudConfig.tripsFileName)
+        }
         let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        return dir.appendingPathComponent("trips.json")
-    }()
+        return dir.appendingPathComponent(CloudConfig.tripsFileName)
+    }
 
     private static let encoder: JSONEncoder = {
         let e = JSONEncoder()
@@ -395,7 +403,12 @@ enum PersistenceService {
     }()
 
     static func load() -> [Trip]? {
-        guard let data = try? Data(contentsOf: fileURL),
+        let url = fileURL
+        // Ask iCloud to materialise the file if it's a placeholder. Best-effort.
+        if AppSettings.shared.iCloudSyncEnabled {
+            try? FileManager.default.startDownloadingUbiquitousItem(at: url)
+        }
+        guard let data = try? Data(contentsOf: url),
               let trips = try? decoder.decode([Trip].self, from: data) else {
             return nil
         }
@@ -405,7 +418,15 @@ enum PersistenceService {
     static func save(_ trips: [Trip]) {
         do {
             let data = try encoder.encode(trips)
-            try data.write(to: fileURL, options: .atomic)
+            let url = fileURL
+            // Make sure the destination directory exists (Ubiquity-Documents
+            // is auto-created by `CloudSync.documentsURL`, local Documents
+            // always exists — this guard is for safety).
+            try? FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try data.write(to: url, options: .atomic)
         } catch {
             print("PersistenceService.save error: \(error)")
         }
@@ -536,24 +557,87 @@ struct ContentView: View {
     @State private var store = TripsStore()
     @Environment(\.scenePhase) private var scenePhase
 
+    /// PDF that arrived via the Share Extension (or `myvoyage://` URL) and
+    /// is waiting to be imported. We hand it off to `BookingImportSheet`,
+    /// then delete the inbox copy.
+    @State private var pendingShareImport: URL?
+    @State private var showSettings = false
+
     var body: some View {
         NavigationStack {
-            TripsListView(store: store)
+            TripsListView(store: store, onOpenSettings: { showSettings = true })
                 .navigationDestination(for: Trip.self) { trip in
                     TripDetailView(trip: trip, store: store)
                 }
         }
         .tint(AppTheme.accent)
         .onChange(of: scenePhase) { _, newPhase in
-            if newPhase != .active { store.save() }
+            if newPhase == .active {
+                checkShareInbox()
+            } else {
+                store.save()
+            }
+        }
+        .onOpenURL { url in
+            handleIncomingURL(url)
+        }
+        .sheet(isPresented: $showSettings) {
+            SettingsView()
+                .presentationDetents([.large])
+        }
+        .sheet(item: $pendingShareImport) { url in
+            BookingImportSheet(
+                trip: store.trips.first ?? store.add(named: "Neue Reise"),
+                store: store,
+                preloadedPDF: url
+            )
+            .onDisappear {
+                try? FileManager.default.removeItem(at: url)
+                pendingShareImport = nil
+            }
         }
     }
+
+    private func handleIncomingURL(_ url: URL) {
+        // Two supported shapes:
+        //   myvoyage://import?name=<inbox filename>     (from Share Extension)
+        //   file:///…/<some>.pdf                        (open-in from Files)
+        if url.isFileURL {
+            pendingShareImport = url
+            return
+        }
+        guard url.scheme == "myvoyage", url.host == "import" else { return }
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let name = components?.queryItems?.first(where: { $0.name == "name" })?.value
+        guard let name, !name.isEmpty else { return }
+        let candidate = CloudSync.inboxURL.appendingPathComponent(name)
+        if FileManager.default.fileExists(atPath: candidate.path) {
+            pendingShareImport = candidate
+        }
+    }
+
+    /// On app foreground, sweep the Share Extension inbox so anything dropped
+    /// while we were away gets picked up too.
+    private func checkShareInbox() {
+        let inbox = CloudSync.inboxURL
+        let pdfs = (try? FileManager.default.contentsOfDirectory(at: inbox, includingPropertiesForKeys: nil))
+            ?? []
+        let firstPDF = pdfs.first { $0.pathExtension.lowercased() == "pdf" }
+        if let firstPDF, pendingShareImport == nil {
+            pendingShareImport = firstPDF
+        }
+    }
+}
+
+extension URL: @retroactive Identifiable {
+    public var id: String { absoluteString }
 }
 
 // MARK: - Trips List (Übersicht)
 
 struct TripsListView: View {
     let store: TripsStore
+    var onOpenSettings: (() -> Void)? = nil
 
     @State private var pushNewTrip: Trip? = nil
     @State private var showWizard = false
@@ -585,6 +669,12 @@ struct TripsListView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
+                    Button {
+                        onOpenSettings?()
+                    } label: {
+                        Label("Einstellungen", systemImage: "gear")
+                    }
+                    Divider()
                     Button {
                         showResetConfirm = true
                     } label: {
@@ -3284,6 +3374,17 @@ enum BookingExtractor {
         }
     }
 
+    /// Short label for the Settings → About row.
+    static var availabilityShortLabel: String {
+        switch SystemLanguageModel.default.availability {
+        case .available: "Aktiv (on-device)"
+        case .unavailable(.appleIntelligenceNotEnabled): "Deaktiviert"
+        case .unavailable(.deviceNotEligible): "Gerät nicht unterstützt"
+        case .unavailable(.modelNotReady): "Modell wird geladen"
+        case .unavailable: "Nicht verfügbar"
+        }
+    }
+
     static func extract(fromText text: String) async throws -> ExtractedBooking {
         // Prüfen ob on-device Model verfügbar ist
         let model = SystemLanguageModel.default
@@ -3526,15 +3627,19 @@ enum BookingApplier {
 struct BookingImportSheet: View {
     let trip: Trip
     let store: TripsStore
+    /// When supplied (e.g. via the Share Extension), the file-picker step is
+    /// skipped and processing starts immediately. The caller is responsible
+    /// for cleaning up the file after the sheet is dismissed.
+    let preloadedPDF: URL?
     @Environment(\.dismiss) private var dismiss
 
-    @State private var step: Step = .picking
+    @State private var step: Step
     @State private var pdfURL: URL?
     @State private var rawText: String = ""
     @State private var extracted: ExtractedBooking?
     @State private var targetTrip: Trip
     @State private var errorMessage: String?
-    @State private var showFileImporter = true
+    @State private var showFileImporter: Bool
     @State private var applyResult: BookingApplier.ApplyResult?
 
     // Editierbare Felder (von extracted vorausgefüllt)
@@ -3549,10 +3654,14 @@ struct BookingImportSheet: View {
     @State private var editPrice: String = ""
     @State private var editCurrency: String = "EUR"
 
-    init(trip: Trip, store: TripsStore) {
+    init(trip: Trip, store: TripsStore, preloadedPDF: URL? = nil) {
         self.trip = trip
         self.store = store
+        self.preloadedPDF = preloadedPDF
         self._targetTrip = State(initialValue: trip)
+        self._pdfURL = State(initialValue: preloadedPDF)
+        self._showFileImporter = State(initialValue: preloadedPDF == nil)
+        self._step = State(initialValue: preloadedPDF == nil ? .picking : .processing)
     }
 
     enum Step {
@@ -3589,6 +3698,11 @@ struct BookingImportSheet: View {
             allowsMultipleSelection: false
         ) { result in
             handleFileImport(result)
+        }
+        .task(id: preloadedPDF) {
+            if let url = preloadedPDF, extracted == nil, errorMessage == nil {
+                await processPDF(at: url)
+            }
         }
     }
 
